@@ -31,6 +31,7 @@ impl Display for Arrow {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 struct Board {
     arrows: [Arrow; 9],
 }
@@ -49,6 +50,13 @@ impl Display for Board {
 }
 
 impl Board {
+    fn aligned(&self) -> bool {
+        self.arrows.windows(2).into_iter().all(|x| match x {
+            [a, b] => a == b,
+            _ => unreachable!("must match the arm above because of `windows(2)`"),
+        })
+    }
+
     fn poke(&self, x: usize, y: usize) -> Self {
         let arrows: [Arrow; 9] = self
             .arrows
