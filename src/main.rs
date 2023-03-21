@@ -17,15 +17,6 @@ impl Arrow {
             Self::Left => Self::Up,
         }
     }
-
-    fn ccw(&self) -> Self {
-        match self {
-            Self::Up => Self::Left,
-            Self::Right => Self::Down,
-            Self::Down => Self::Right,
-            Self::Left => Self::Up,
-        }
-    }
 }
 
 impl Display for Arrow {
