@@ -41,57 +41,78 @@ impl Display for Arrow {
 }
 
 struct Board {
-    arrows: [[Arrow; 3]; 3],
+    arrows: [Arrow; 9],
 }
 
 impl Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "┌─────────┐")?;
-        for [a, b, c] in &self.arrows {
-            writeln!(f, "│ {}  {}  {} │", a, b, c)?;
+        fn row(f: &mut std::fmt::Formatter<'_>, a: &[Arrow]) -> std::fmt::Result {
+            writeln!(f, "│ {}  {}  {} │", a[0], a[1], a[2])
         }
+        writeln!(f, "┌─────────┐")?;
+        row(f, &self.arrows[0..3])?;
+        row(f, &self.arrows[3..6])?;
+        row(f, &self.arrows[6..9])?;
         write!(f, "└─────────┘")
     }
 }
 
 impl Board {
     fn poke(&self, x: usize, y: usize) -> Self {
-        let arrows: [[Arrow; 3]; 3] = self
+        let arrows: [Arrow; 9] = self
             .arrows
             .iter()
             .enumerate()
-            .map(|(ay, arrows)| {
-                arrows
-                    .iter()
-                    .enumerate()
-                    .map(|(ax, arrow)| {
-                        let dx = x as i64 - ax as i64;
-                        let dy = y as i64 - ay as i64;
-                        match (dx, dy) {
-                            (-1..=1, -1..=1) => arrow.cw(),
-                            _ => arrow.clone(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .try_into()
-                    .expect("")
+            .map(|(i, arrow)| {
+                let dx = x as i64 - (i % 3) as i64;
+                let dy = y as i64 - (i / 3) as i64;
+                match (dx, dy) {
+                    (-1..=1, -1..=1) => arrow.cw(),
+                    _ => arrow.clone(),
+                }
             })
             .collect::<Vec<_>>()
             .try_into()
-            .expect("");
+            .expect("want exactly 9 elements");
         Self { arrows }
     }
 }
 
 fn main() {
-    let b = Board {
+    let answer = Board {
         arrows: [
-            [Arrow::Up, Arrow::Up, Arrow::Up],
-            [Arrow::Up, Arrow::Up, Arrow::Up],
-            [Arrow::Up, Arrow::Up, Arrow::Up],
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Up,
         ],
     };
-    println!("{}", b);
-    let b = b.poke(0, 0);
-    println!("{}", b);
+    let mut problem = Board {
+        arrows: [
+            Arrow::Down,
+            Arrow::Up,
+            Arrow::Right,
+            Arrow::Up,
+            Arrow::Up,
+            Arrow::Right,
+            Arrow::Left,
+            Arrow::Left,
+            Arrow::Right,
+        ],
+    };
+
+    let mut moves = Vec::new();
+    while answer != problem {
+        let x = rand::random::<usize>() % 3;
+        let y = rand::random::<usize>() % 3;
+        problem = problem.poke(x, y);
+        moves.push((x, y));
+        // println!("{}", problem)
+    }
+    println!("{} moves", moves.len());
 }
