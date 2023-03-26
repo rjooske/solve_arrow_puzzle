@@ -1,14 +1,12 @@
 use itertools::Itertools;
 use rayon::prelude::*;
-use solve_arrow_puzzle::solve::{self, RowPoke};
+use solve_arrow_puzzle::{
+    puzzle::{Arrow, Row, RowPoke},
+    solve::row_lut_index,
+};
 
 fn main() {
-    let all_arrows = [
-        solve::Arrow::Up,
-        solve::Arrow::Right,
-        solve::Arrow::Down,
-        solve::Arrow::Left,
-    ];
+    let all_arrows = [Arrow::Up, Arrow::Right, Arrow::Down, Arrow::Left];
 
     let all_rows: Vec<_> = [
         all_arrows.into_iter(),
@@ -18,7 +16,7 @@ fn main() {
     ]
     .into_iter()
     .multi_cartesian_product()
-    .map(|x| solve::Row(x.try_into().unwrap()))
+    .map(|x| Row(x.try_into().unwrap()))
     .collect();
 
     let mut all_solutions: Vec<_> = all_rows
@@ -31,25 +29,38 @@ fn main() {
         .collect();
 
     all_solutions.sort_unstable_by(|(a, _), (b, _)| {
-        let a = a.to_lut_index();
-        let b = b.to_lut_index();
+        let a = row_lut_index(a);
+        let b = row_lut_index(b);
         a.cmp(&b)
     });
 
     let lut = all_solutions
         .into_iter()
         .map(|(_, pokes)| {
-            pokes
+            let pokes = pokes
                 .iter()
-                .map(|p| match p {
-                    RowPoke::A => 'A',
-                    RowPoke::B => 'B',
-                    RowPoke::C => 'C',
-                    RowPoke::D => 'D',
+                .map(|p| {
+                    let p = match p {
+                        RowPoke::A => 'A',
+                        RowPoke::B => 'B',
+                        RowPoke::C => 'C',
+                        RowPoke::D => 'D',
+                    };
+                    format!("RowPoke::{}", p)
                 })
-                .collect::<String>()
+                .join(",");
+            format!("&[{}]", pokes)
         })
-        .join(",");
+        .join(",\n");
 
-    print!("{}", lut);
+    print!(
+        r#"
+use crate::puzzle::RowPoke;
+
+pub const SOLUTIONS: [&[RowPoke]; 256] = [
+{}
+];
+        "#,
+        lut
+    );
 }
