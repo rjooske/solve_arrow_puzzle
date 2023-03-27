@@ -78,6 +78,17 @@ pub enum RowPoke {
     D,
 }
 
+impl From<RowPoke> for u8 {
+    fn from(p: RowPoke) -> Self {
+        match p {
+            RowPoke::A => 0,
+            RowPoke::B => 1,
+            RowPoke::C => 2,
+            RowPoke::D => 3,
+        }
+    }
+}
+
 impl TryFrom<u8> for RowPoke {
     type Error = RowPokeError;
 
@@ -157,5 +168,67 @@ impl Row {
         }
 
         f(0, vec![self.clone()])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BoardPoke(pub RowPoke, pub RowPoke);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Board(pub [Row; 4]);
+
+impl Display for Board {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "┌────────────┐")?;
+        for Row([a, b, c, d]) in &self.0 {
+            writeln!(f, "│ {}  {}  {}  {} │", a, b, c, d)?;
+        }
+        write!(f, "└────────────┘")
+    }
+}
+
+impl Board {
+    pub fn to_string_with_highlight(&self, p: BoardPoke) -> String {
+        let BoardPoke(px, py) = p;
+        let px: u8 = px.into();
+        let py: u8 = py.into();
+
+        let mut buf = String::new();
+        buf += "┌────────────┐\n";
+        for y in 0u8..4 {
+            buf += "│";
+            for x in 0u8..4 {
+                let ux: usize = x.into();
+                let uy: usize = y.into();
+                let arrow = self.0[uy].0[ux];
+                if x == px && y == py {
+                    buf += &format!("\x1b[7m {} \x1b[0m", arrow);
+                } else {
+                    buf += &format!(" {} ", arrow);
+                }
+            }
+            buf += "│\n";
+        }
+        buf += "└────────────┘";
+        buf
+    }
+
+    pub fn aligned(&self) -> bool {
+        let Board([a, b, c, d]) = self;
+        a.aligned() && a == b && b == c && c == d
+    }
+
+    pub fn poke(&self, BoardPoke(x, y): BoardPoke) -> Board {
+        let Board([a, b, c, d]) = self;
+        match y {
+            RowPoke::A => Board([a.poke(x), b.poke(x), c.clone(), d.clone()]),
+            RowPoke::B => Board([a.poke(x), b.poke(x), c.poke(x), d.clone()]),
+            RowPoke::C => Board([a.clone(), b.poke(x), c.poke(x), d.poke(x)]),
+            RowPoke::D => Board([a.clone(), b.clone(), c.poke(x), d.poke(x)]),
+        }
+    }
+
+    pub fn poke_many(&self, ps: &[BoardPoke]) -> Board {
+        ps.iter().fold(self.clone(), |r, p| r.poke(*p))
     }
 }
