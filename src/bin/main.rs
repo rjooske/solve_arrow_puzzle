@@ -49,10 +49,10 @@ fn concat_linewise(a: &str, b: &str) -> String {
 
 fn main() {
     let problem = board!(
-        l l r d
-        d l u r
-        u r l l
-        u u l l
+        u l l d
+        u r l d
+        u d u u
+        d l u u
     );
 
     let pokes = pokes_to_align_board(&problem);

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     lut::SOLUTIONS,
     puzzle::{Arrow, Board, BoardPoke, Row, RowPoke},
@@ -39,6 +41,18 @@ fn first_column_as_row(b: &Board) -> Row {
     Row([*a, *b, *c, *d])
 }
 
+fn remove_unnecessary_pokes(ps: &[BoardPoke]) -> Vec<BoardPoke> {
+    let mut poke_to_counts = HashMap::new();
+    for p in ps {
+        poke_to_counts.entry(p).and_modify(|n| *n += 1).or_insert(1);
+    }
+
+    poke_to_counts
+        .into_iter()
+        .flat_map(|(p, n)| [*p].repeat(n % 4))
+        .collect()
+}
+
 pub fn pokes_to_align_board(board: &Board) -> Vec<BoardPoke> {
     let mut board_pokes = Vec::new();
 
@@ -78,7 +92,20 @@ pub fn pokes_to_align_board(board: &Board) -> Vec<BoardPoke> {
         .iter()
         .flat_map(|&p| [BoardPoke(RowPoke::A, p), BoardPoke(RowPoke::D, p)])
         .collect::<Vec<_>>();
+    let board = board.poke_many(&pokes);
     board_pokes.append(&mut pokes);
+
+    let mut pokes = [
+        BoardPoke(RowPoke::A, RowPoke::A),
+        BoardPoke(RowPoke::D, RowPoke::A),
+        BoardPoke(RowPoke::A, RowPoke::D),
+        BoardPoke(RowPoke::D, RowPoke::D),
+    ]
+    .repeat(board.0[0].0[0].distance_to(Arrow::Up).into());
+    board_pokes.append(&mut pokes);
+
+    board_pokes = remove_unnecessary_pokes(&board_pokes);
+    board_pokes.sort_unstable();
 
     board_pokes
 }

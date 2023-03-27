@@ -35,7 +35,7 @@ impl Arrow {
     }
 
     /// How many CW rotations are needed to go from `self` to `other`.
-    fn distance_to(self, other: Arrow) -> u8 {
+    pub fn distance_to(self, other: Arrow) -> u8 {
         match self {
             Arrow::Up => match other {
                 Arrow::Up => 0,
@@ -70,7 +70,7 @@ pub enum RowPokeError {
     OutOfBounds(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RowPoke {
     A,
     B,
@@ -171,8 +171,25 @@ impl Row {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BoardPoke(pub RowPoke, pub RowPoke);
+
+impl PartialOrd for BoardPoke {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BoardPoke {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let BoardPoke(ax, ay) = self;
+        let BoardPoke(bx, by) = other;
+        match ay.cmp(by) {
+            std::cmp::Ordering::Equal => ax.cmp(bx),
+            x => x,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board(pub [Row; 4]);
