@@ -249,3 +249,35 @@ impl Board {
         ps.iter().fold(self.clone(), |r, p| r.poke(*p))
     }
 }
+
+#[macro_export]
+macro_rules! board {
+    (
+        $a:ident $b:ident $c:ident $d:ident
+        $e:ident $f:ident $g:ident $h:ident
+        $i:ident $j:ident $k:ident $l:ident
+        $m:ident $n:ident $o:ident $p:ident
+    ) => {{
+        macro_rules! arrow {
+            (u) => {
+                Arrow::Up
+            };
+            (r) => {
+                Arrow::Right
+            };
+            (d) => {
+                Arrow::Down
+            };
+            (l) => {
+                Arrow::Left
+            };
+        }
+        Board([
+            Row([arrow!($a), arrow!($b), arrow!($c), arrow!($d)]),
+            Row([arrow!($e), arrow!($f), arrow!($g), arrow!($h)]),
+            Row([arrow!($i), arrow!($j), arrow!($k), arrow!($l)]),
+            Row([arrow!($m), arrow!($n), arrow!($o), arrow!($p)]),
+        ])
+    }};
+}
+pub use board;
