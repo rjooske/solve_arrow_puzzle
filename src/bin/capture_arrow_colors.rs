@@ -38,7 +38,10 @@ fn parse_arg(arg: &str) -> Result<Vec<Arrow>> {
         .collect::<Result<Vec<_>>>()
 }
 
-fn parse_arrow_to_color(arrows: &[Arrow], colors: &[Color]) -> Result<ArrowToColor> {
+fn parse_arrow_to_color(
+    arrows: &[Arrow],
+    colors: &[Color],
+) -> Result<ArrowToColor> {
     fn f(map: &HashMap<&Arrow, Vec<&Color>>, a: &Arrow) -> Result<Color> {
         let c = **map
             .get(a)
@@ -63,7 +66,8 @@ fn parse_arrow_to_color(arrows: &[Arrow], colors: &[Color]) -> Result<ArrowToCol
 }
 
 fn main() -> Result<()> {
-    let [_, arg]: [String; 2] = env::args().collect::<Vec<_>>().try_into().unwrap();
+    let [_, arg]: [String; 2] =
+        env::args().collect::<Vec<_>>().try_into().unwrap();
     let arrows = parse_arg(&arg)?;
 
     let config = fs::read_to_string("config.json")?;
