@@ -42,21 +42,6 @@ struct ArrowToColor {
     left: Color,
 }
 
-trait At<T, N> {
-    fn at(&self, x: N, y: N, w: N) -> &T;
-}
-
-impl<T, N> At<T::Output, N> for T
-where
-    T: Index<N>,
-    T::Output: Sized,
-    N: Add<Output = N> + Mul<Output = N>,
-{
-    fn at(&self, x: N, y: N, w: N) -> &T::Output {
-        &self[x + w * y]
-    }
-}
-
 fn capture_frame(c: &mut Capturer) -> io::Result<Vec<u8>> {
     loop {
         match c.frame() {
