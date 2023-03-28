@@ -1,46 +1,14 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
-use solve_arrow_puzzle::puzzle::Arrow;
-use std::{
-    collections::HashMap,
-    env,
-    error::Error,
-    fs, io,
-    ops::{Add, Index, Mul},
-    thread::sleep,
-    time::Duration,
+
+use solve_arrow_puzzle::{
+    config::Config,
+    gui::{ArrowToColor, Color},
+    puzzle::Arrow,
 };
+use std::{collections::HashMap, env, fs, io, thread::sleep, time::Duration};
 
 use scrap::{Capturer, Display};
-
-#[derive(Debug, Deserialize)]
-struct ConfigPoint {
-    x: i64,
-    y: i64,
-}
-
-#[derive(Debug, Deserialize)]
-struct Config {
-    first_arrow: ConfigPoint,
-    claim_button: ConfigPoint,
-    arrow_diameter: i64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-struct Color {
-    r: u8,
-    g: u8,
-    b: u8,
-}
-
-#[derive(Serialize)]
-struct ArrowToColor {
-    up: Color,
-    right: Color,
-    down: Color,
-    left: Color,
-}
 
 fn capture_frame(c: &mut Capturer) -> io::Result<Vec<u8>> {
     loop {
@@ -57,7 +25,7 @@ fn capture_frame(c: &mut Capturer) -> io::Result<Vec<u8>> {
     }
 }
 
-fn parse_arg(arg: &str) -> anyhow::Result<Vec<Arrow>> {
+fn parse_arg(arg: &str) -> Result<Vec<Arrow>> {
     arg.chars()
         .take(16)
         .map(|c| match c {
@@ -65,13 +33,13 @@ fn parse_arg(arg: &str) -> anyhow::Result<Vec<Arrow>> {
             'r' => Ok(Arrow::Right),
             'd' => Ok(Arrow::Down),
             'l' => Ok(Arrow::Left),
-            c => Err(anyhow!("want either `u`, `r`, `d`, or `l`, got `{}`", c)),
+            c => Err(anyhow!("want `u`, `r`, `d`, or `l`, got `{}`", c)),
         })
-        .collect::<anyhow::Result<Vec<_>>>()
+        .collect::<Result<Vec<_>>>()
 }
 
-fn parse_arrow_to_color(arrows: &[Arrow], colors: &[Color]) -> anyhow::Result<ArrowToColor> {
-    fn f(map: &HashMap<&Arrow, Vec<&Color>>, a: &Arrow) -> anyhow::Result<Color> {
+fn parse_arrow_to_color(arrows: &[Arrow], colors: &[Color]) -> Result<ArrowToColor> {
+    fn f(map: &HashMap<&Arrow, Vec<&Color>>, a: &Arrow) -> Result<Color> {
         let c = **map
             .get(a)
             .with_context(|| format!("did not get color for `{}`", a))?
@@ -94,7 +62,7 @@ fn parse_arrow_to_color(arrows: &[Arrow], colors: &[Color]) -> anyhow::Result<Ar
     })
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<()> {
     let [_, arg]: [String; 2] = env::args().collect::<Vec<_>>().try_into().unwrap();
     let arrows = parse_arg(&arg)?;
 
@@ -131,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 )),
             }
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
 
     let arrow_to_color = parse_arrow_to_color(&arrows, &colors)?;
     println!("{}", serde_json::to_string(&arrow_to_color)?);
