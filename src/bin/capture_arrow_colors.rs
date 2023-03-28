@@ -87,8 +87,8 @@ fn main() -> Result<()> {
     let colors = (0..4)
         .cartesian_product(0..4)
         .map(|(y, x)| {
-            let x = config.first_arrow.x + config.arrow_diameter * x;
-            let y = config.first_arrow.y + config.arrow_diameter * y;
+            let x = config.first_arrow_position.x + config.arrow_diameter * x;
+            let y = config.first_arrow_position.y + config.arrow_diameter * y;
             let i: usize = x as usize + width * y as usize;
             match frame.get(i) {
                 Some(c) => Ok(*c),
