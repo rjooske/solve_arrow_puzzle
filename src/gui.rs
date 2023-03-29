@@ -1,14 +1,46 @@
-use std::{io, str::FromStr, thread::sleep, time::Duration, usize};
+use std::{
+    error::Error, fmt::Display, io, str::FromStr, thread::sleep,
+    time::Duration, usize,
+};
 
 use scrap::{Capturer, Frame};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-use crate::puzzle::Arrow;
+use crate::puzzle::{Arrow, Board, BoardPoke, Row, RowPoke};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Point {
-    pub x: i64,
-    pub y: i64,
+    pub x: u64,
+    pub y: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Dimensions {
+    pub first_arrow_position: Point,
+    pub claim_button_position: Point,
+    pub arrow_diameter: u64,
+}
+
+impl FromStr for Dimensions {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s)
+    }
+}
+
+impl Dimensions {
+    pub fn arrow_position(&self, &BoardPoke(x, y): &BoardPoke) -> Point {
+        let x: u8 = x.into();
+        let y: u8 = y.into();
+        let x: u64 = x.into();
+        let y: u64 = y.into();
+        Point {
+            x: self.first_arrow_position.x + self.arrow_diameter * x,
+            y: self.first_arrow_position.y + self.arrow_diameter * y,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -113,4 +145,45 @@ impl Screenshot {
     pub fn at(&self, x: usize, y: usize) -> Option<Color> {
         self.pixels.get(x + self.width * y).copied()
     }
+}
+
+#[derive(Debug, Error)]
+pub enum DetectBoardError {
+    #[error("screenshot size is {screenshot_width}x{screenshot_height}, but tried to find an arrow at ({arrow_x}, {arrow_y})")]
+    ArrowOutsideScreenshot {
+        arrow_x: u64,
+        arrow_y: u64,
+        screenshot_width: usize,
+        screenshot_height: usize,
+    },
+}
+
+pub fn detect_board(
+    dim: &Dimensions,
+    atc: &ArrowToColor,
+    s: &Screenshot,
+) -> Result<Board, DetectBoardError> {
+    let pokes = [RowPoke::A, RowPoke::B, RowPoke::C, RowPoke::D];
+    let rows: Result<Vec<_>, _> = pokes
+        .into_iter()
+        .map(|y| {
+            let arrows: Result<Vec<_>, _> = pokes
+                .into_iter()
+                .map(|x| {
+                    let Point { x, y } = dim.arrow_position(&BoardPoke(x, y));
+                    match s.at(x as _, y as _) {
+                        Some(c) => Ok(atc.closest(&c)),
+                        None => Err(DetectBoardError::ArrowOutsideScreenshot {
+                            arrow_x: x,
+                            arrow_y: y,
+                            screenshot_width: s.width,
+                            screenshot_height: s.height,
+                        }),
+                    }
+                })
+                .collect();
+            arrows.map(|a| Row(a.try_into().unwrap()))
+        })
+        .collect();
+    rows.map(|r| Board(r.try_into().unwrap()))
 }
