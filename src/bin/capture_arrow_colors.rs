@@ -5,7 +5,7 @@ use solve_arrow_puzzle::{
     gui::{ArrowToColor, Color, Dimensions, Point, Screenshot},
     puzzle::{Arrow, BoardPoke, RowPoke},
 };
-use std::{collections::HashMap, env, fs, io, thread::sleep, time::Duration};
+use std::{collections::HashMap, env, fs};
 
 use scrap::{Capturer, Display};
 
