@@ -132,7 +132,7 @@ impl Row {
         }
     }
 
-    fn poke_many(&self, ps: &[RowPoke]) -> Row {
+    pub fn poke_many(&self, ps: &[RowPoke]) -> Row {
         ps.iter().fold(self.clone(), |r, p| r.poke(*p))
     }
 
