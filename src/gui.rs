@@ -1,7 +1,4 @@
-use std::{
-    error::Error, fmt::Display, io, str::FromStr, thread::sleep,
-    time::Duration, usize,
-};
+use std::{io, str::FromStr, thread::sleep, time::Duration, usize};
 
 use scrap::{Capturer, Frame};
 use serde::{Deserialize, Serialize};
