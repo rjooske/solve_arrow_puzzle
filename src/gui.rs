@@ -48,7 +48,7 @@ pub struct Color {
 }
 
 impl Color {
-    fn euclidean_distance_to(&self, other: &Color) -> f64 {
+    pub fn euclidean_distance_to(self, other: Color) -> f64 {
         let dr = f64::from(self.r) - f64::from(other.r);
         let dg = f64::from(self.g) - f64::from(other.g);
         let db = f64::from(self.b) - f64::from(other.b);
@@ -82,8 +82,8 @@ impl ArrowToColor {
             (Arrow::Left, self.left),
         ]
         .into_iter()
-        .map(|(a, c)| (a, c, c.euclidean_distance_to(&target)))
-        .min_by(|(_, _, a), (_, _, b)| a.total_cmp(&b))
+        .map(|(a, c)| (a, c, c.euclidean_distance_to(target)))
+        .min_by(|(_, _, a), (_, _, b)| a.total_cmp(b))
         .map(|(a, _, _)| a)
         .expect("no way the iterator is empty")
     }

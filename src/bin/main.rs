@@ -10,7 +10,7 @@ use device_query::{DeviceQuery, DeviceState, Keycode};
 use scrap::{Capturer, Display};
 use solve_arrow_puzzle::{
     android::Tapper,
-    gui::{detect_board, ArrowToColor, Dimensions, Point, Screenshot},
+    gui::{detect_board, ArrowToColor, Color, Dimensions, Point, Screenshot},
     solve::pokes_to_align_board,
 };
 
@@ -34,9 +34,9 @@ where
 
 fn main() -> Result<()> {
     let dimensions: Dimensions =
-        fs::read_to_string("dimensions.json")?.parse()?;
+        serde_json::from_str(&fs::read_to_string("dimensions.json")?)?;
     let arrow_to_color: ArrowToColor =
-        fs::read_to_string("arrow_to_color.json")?.parse()?;
+        serde_json::from_str(&fs::read_to_string("arrow_to_color.json")?)?;
 
     let tapper_config = fs::read_to_string("tapper_config.json")?;
     let tapper_config = serde_json::from_str(&tapper_config)?;
@@ -59,7 +59,12 @@ fn main() -> Result<()> {
         watch(&mut capturer, Duration::from_millis(500), |s| {
             let Point { x, y } = dimensions.first_arrow_position;
             let c = s.at(x as _, y as _)?;
-            Ok(c.r != 27)
+            let d = c.euclidean_distance_to(Color {
+                r: 27,
+                g: 27,
+                b: 27,
+            });
+            Ok(d > 3.0)
         })?;
 
         let screenshot = Screenshot::take(&mut capturer)?;
@@ -70,8 +75,14 @@ fn main() -> Result<()> {
         watch(&mut capturer, Duration::from_millis(500), |s| {
             let Point { x, y } = dimensions.first_arrow_position;
             let c = s.at(x as _, y as _)?;
-            Ok(c.r == 27)
+            let d = c.euclidean_distance_to(Color {
+                r: 27,
+                g: 27,
+                b: 27,
+            });
+            Ok(d < 3.0)
         })?;
+        sleep(Duration::from_millis(50));
 
         tapper.tap_claim_button()?;
     }
