@@ -6,18 +6,41 @@ use std::{
 
 use anyhow::Result;
 use device_query::{DeviceQuery, DeviceState, Keycode};
-use enigo::{Enigo, MouseButton, MouseControllable};
+
 use scrap::{Capturer, Display};
 use solve_arrow_puzzle::{
-    gui::{detect_board, ArrowToColor, Color, Dimensions, Point, Screenshot},
+    android::Tapper,
+    gui::{detect_board, ArrowToColor, Dimensions, Point, Screenshot},
     solve::pokes_to_align_board,
 };
+
+fn watch<P>(
+    capturer: &mut Capturer,
+    timeout: Duration,
+    predicate: P,
+) -> Result<()>
+where
+    P: Fn(Screenshot) -> Result<bool>,
+{
+    let before = Instant::now();
+    while before.elapsed() < timeout {
+        if predicate(Screenshot::take(capturer)?)? {
+            break;
+        }
+        sleep(Duration::from_millis(1));
+    }
+    Ok(())
+}
 
 fn main() -> Result<()> {
     let dimensions: Dimensions =
         fs::read_to_string("dimensions.json")?.parse()?;
     let arrow_to_color: ArrowToColor =
         fs::read_to_string("arrow_to_color.json")?.parse()?;
+
+    let tapper_config = fs::read_to_string("tapper_config.json")?;
+    let tapper_config = serde_json::from_str(&tapper_config)?;
+    let mut tapper = Tapper::new(tapper_config)?;
 
     println!("press shift to begin");
     let state = DeviceState::new();
@@ -30,78 +53,28 @@ fn main() -> Result<()> {
     }
 
     let mut capturer = Capturer::new(Display::primary()?)?;
-    let mut enigo = Enigo::new();
-
-    let mut min_poke_count = usize::MAX;
-    let mut max_poke_count = 0;
 
     println!("hold backspace to quit");
     while !state.get_keys().contains(&Keycode::Backspace) {
-        let before = Instant::now();
-        while before.elapsed() < Duration::from_millis(200) {
-            if let Some(Color { r, g: _, b: _ }) =
-                Screenshot::take(&mut capturer)?.at(
-                    dimensions.first_arrow_position.x as _,
-                    dimensions.first_arrow_position.y as _,
-                )
-            {
-                if r != 27 {
-                    break;
-                }
-            }
-        }
+        watch(&mut capturer, Duration::from_millis(500), |s| {
+            let Point { x, y } = dimensions.first_arrow_position;
+            let c = s.at(x as _, y as _)?;
+            Ok(c.r != 27)
+        })?;
 
         let screenshot = Screenshot::take(&mut capturer)?;
         let board = detect_board(&dimensions, &arrow_to_color, &screenshot)?;
         let pokes = pokes_to_align_board(&board);
+        tapper.tap_many(&pokes)?;
 
-        let len = pokes.len();
-        if len < min_poke_count {
-            min_poke_count = len;
-            println!("min {}", len);
-            println!("{}", board);
-        }
-        if len > max_poke_count {
-            max_poke_count = len;
-            println!("max {}", len);
-            println!("{}", board);
-        }
+        watch(&mut capturer, Duration::from_millis(500), |s| {
+            let Point { x, y } = dimensions.first_arrow_position;
+            let c = s.at(x as _, y as _)?;
+            Ok(c.r == 27)
+        })?;
 
-        for p in pokes {
-            let Point { x, y } = dimensions.arrow_position(&p);
-            click(&mut enigo, x as _, y as _, Duration::from_millis(1));
-        }
-
-        let before = Instant::now();
-        while before.elapsed() < Duration::from_millis(200) {
-            if let Some(Color { r, g, b }) = Screenshot::take(&mut capturer)?
-                .at(
-                    dimensions.first_arrow_position.x as _,
-                    dimensions.first_arrow_position.y as _,
-                )
-            {
-                if 27 == r && r == g && g == b {
-                    break;
-                }
-            }
-        }
-        sleep(Duration::from_millis(40));
-
-        click(
-            &mut enigo,
-            dimensions.claim_button_position.x as _,
-            dimensions.claim_button_position.y as _,
-            Duration::from_millis(1),
-        );
+        tapper.tap_claim_button()?;
     }
 
     Ok(())
-}
-
-fn click(enigo: &mut Enigo, x: i32, y: i32, delay: Duration) {
-    enigo.mouse_move_to(x, y);
-    sleep(delay);
-    enigo.mouse_down(MouseButton::Left);
-    sleep(delay);
-    enigo.mouse_up(MouseButton::Left);
 }

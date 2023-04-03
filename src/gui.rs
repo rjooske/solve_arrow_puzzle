@@ -57,7 +57,7 @@ impl Color {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ArrowToColor {
     pub up: Color,
     pub right: Color,
@@ -74,22 +74,30 @@ impl FromStr for ArrowToColor {
 }
 
 impl ArrowToColor {
-    pub fn closest(&self, target: &Color) -> Arrow {
-        let (arrow, _) = [
+    pub fn closest(&self, target: Color) -> Arrow {
+        [
             (Arrow::Up, self.up),
             (Arrow::Right, self.right),
             (Arrow::Down, self.down),
             (Arrow::Left, self.left),
         ]
         .into_iter()
-        .min_by(|(_, a), (_, b)| {
-            let a = a.euclidean_distance_to(target);
-            let b = b.euclidean_distance_to(target);
-            a.total_cmp(&b)
-        })
-        .expect("no way the iterator is empty");
-        arrow
+        .map(|(a, c)| (a, c, c.euclidean_distance_to(&target)))
+        .min_by(|(_, _, a), (_, _, b)| a.total_cmp(&b))
+        .map(|(a, _, _)| a)
+        .expect("no way the iterator is empty")
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ScreenshotAtError {
+    #[error("({x}, {y}) is outside of the screenshot ({width}x{height})")]
+    OutOfRange {
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+    },
 }
 
 pub struct Screenshot {
@@ -139,20 +147,22 @@ impl Screenshot {
         }
     }
 
-    pub fn at(&self, x: usize, y: usize) -> Option<Color> {
-        self.pixels.get(x + self.width * y).copied()
+    pub fn at(&self, x: usize, y: usize) -> Result<Color, ScreenshotAtError> {
+        self.pixels.get(x + self.width * y).copied().ok_or({
+            ScreenshotAtError::OutOfRange {
+                x,
+                y,
+                width: self.width,
+                height: self.height,
+            }
+        })
     }
 }
 
 #[derive(Debug, Error)]
 pub enum DetectBoardError {
-    #[error("screenshot size is {screenshot_width}x{screenshot_height}, but tried to find an arrow at ({arrow_x}, {arrow_y})")]
-    ArrowOutsideScreenshot {
-        arrow_x: u64,
-        arrow_y: u64,
-        screenshot_width: usize,
-        screenshot_height: usize,
-    },
+    #[error("tried to find an arrow outside of the screen: {0}")]
+    ArrowOutsideScreenshot(#[from] ScreenshotAtError),
 }
 
 pub fn detect_board(
@@ -168,15 +178,9 @@ pub fn detect_board(
                 .into_iter()
                 .map(|x| {
                     let Point { x, y } = dim.arrow_position(&BoardPoke(x, y));
-                    match s.at(x as _, y as _) {
-                        Some(c) => Ok(atc.closest(&c)),
-                        None => Err(DetectBoardError::ArrowOutsideScreenshot {
-                            arrow_x: x,
-                            arrow_y: y,
-                            screenshot_width: s.width,
-                            screenshot_height: s.height,
-                        }),
-                    }
+                    let color = s.at(x as _, y as _)?;
+                    let arrow = atc.closest(color);
+                    Ok(arrow)
                 })
                 .collect();
             arrows.map(|a| Row(a.try_into().unwrap()))
