@@ -1,4 +1,4 @@
-use std::{fmt::Display, ops::RangeInclusive};
+use std::{cmp::Ordering, fmt::Display, iter::repeat, ops::RangeInclusive};
 
 use itertools::Itertools;
 use thiserror::Error;
@@ -31,6 +31,8 @@ impl Display for Arrow {
 }
 
 impl Arrow {
+    const UP: Arrow = Arrow(0);
+
     fn rotate_mut(&mut self) {
         self.0 = (self.0 + 1) % 6;
     }
@@ -38,6 +40,12 @@ impl Arrow {
     fn rotate(mut self) -> Arrow {
         self.rotate_mut();
         self
+    }
+
+    fn distance_to(self, other: Arrow) -> usize {
+        let a: isize = self.0.into();
+        let b: isize = other.0.into();
+        (b - a).rem_euclid(6).try_into().unwrap()
     }
 }
 
@@ -91,17 +99,64 @@ impl Board {
         9..=9,
     ];
 
+    const POSITIONS: [(u8, u8); 37] = [
+        // 1st row
+        (1, 1),
+        (2, 1),
+        (3, 1),
+        (4, 1),
+        // 2nd row
+        (1, 2),
+        (2, 2),
+        (3, 2),
+        (4, 2),
+        (5, 2),
+        // 3rd row
+        (1, 3),
+        (2, 3),
+        (3, 3),
+        (4, 3),
+        (5, 3),
+        (6, 3),
+        // 4th row
+        (1, 4),
+        (2, 4),
+        (3, 4),
+        (4, 4),
+        (5, 4),
+        (6, 4),
+        (7, 4),
+        // 5th row
+        (2, 5),
+        (3, 5),
+        (4, 5),
+        (5, 5),
+        (6, 5),
+        (7, 5),
+        // 6th row
+        (3, 6),
+        (4, 6),
+        (5, 6),
+        (6, 6),
+        (7, 6),
+        // 7th row
+        (4, 7),
+        (5, 7),
+        (6, 7),
+        (7, 7),
+    ];
+
+    fn new() -> Board {
+        Board([Arrow::UP; 81])
+    }
+
     /// Iterates over the arrows inside the hexagon along with its x and y
     /// coordinate.
     fn arrows(&self) -> impl Iterator<Item = (usize, usize, Arrow)> + '_ {
-        self.0.iter().enumerate().filter_map(|(i, a)| {
-            let x = i % 9;
-            let y = i / 9;
-            if Board::Y_TO_X_RANGE[y].contains(&x) {
-                Some((x, y, *a))
-            } else {
-                None
-            }
+        Board::POSITIONS.iter().map(|&(x, y)| {
+            let x: usize = x.into();
+            let y: usize = y.into();
+            (x, y, self.0[x + 9 * y])
         })
     }
 
@@ -110,7 +165,7 @@ impl Board {
     }
 
     fn aligned_to(&self, a: Arrow) -> bool {
-        *self.at(1, 1) == a && self.aligned()
+        self.at(1, 1) == a && self.aligned()
     }
 
     fn at_mut(&mut self, x: u8, y: u8) -> &mut Arrow {
@@ -118,9 +173,9 @@ impl Board {
         &mut self.0[i]
     }
 
-    fn at(&self, x: u8, y: u8) -> &Arrow {
+    fn at(&self, x: u8, y: u8) -> Arrow {
         let i: usize = (x + 9 * y).into();
-        &self.0[i]
+        self.0[i]
     }
 
     fn poke_mut(&mut self, x: u8, y: u8) {
@@ -141,6 +196,101 @@ impl Board {
         let mut b = self.clone();
         b.poke_mut(x, y);
         b
+    }
+
+    fn solve(mut self) -> Vec<(u8, u8)> {
+        fn partially_solve(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
+            const PARTIAL_SOLVE_MOVES: [((u8, u8), (u8, u8)); 30] = [
+                // 1st row
+                ((1, 1), (2, 2)),
+                ((2, 1), (3, 2)),
+                ((3, 1), (4, 2)),
+                ((4, 1), (5, 2)),
+                ((1, 2), (2, 3)),
+                ((1, 3), (2, 4)),
+                ((1, 4), (2, 5)),
+                // 2nd row
+                ((2, 2), (3, 3)),
+                ((3, 2), (4, 3)),
+                ((4, 2), (5, 3)),
+                ((5, 2), (6, 3)),
+                ((2, 3), (3, 4)),
+                ((2, 4), (3, 5)),
+                ((2, 5), (3, 6)),
+                // 3rd row
+                ((3, 3), (4, 4)),
+                ((4, 3), (5, 4)),
+                ((5, 3), (6, 4)),
+                ((6, 3), (7, 4)),
+                ((3, 4), (4, 5)),
+                ((3, 5), (4, 6)),
+                ((3, 6), (4, 7)),
+                // 4th row
+                ((4, 4), (5, 5)),
+                ((5, 4), (6, 5)),
+                ((6, 4), (7, 5)),
+                ((4, 5), (5, 6)),
+                ((4, 6), (5, 7)),
+                // 5th row
+                ((5, 5), (6, 6)),
+                ((6, 5), (7, 6)),
+                ((5, 6), (6, 7)),
+                // 6th row
+                ((6, 6), (7, 7)),
+            ];
+
+            for ((target_x, target_y), poke) in PARTIAL_SOLVE_MOVES {
+                let target = b.at(target_x, target_y);
+                let pokes = repeat(poke).take(target.distance_to(Arrow::UP));
+                all_pokes.extend(pokes.clone());
+                for (x, y) in pokes {
+                    b.poke_mut(x, y);
+                }
+            }
+        }
+
+        fn fixup(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
+            let a_poke_count = Arrow::UP.distance_to(b.at(7, 5))
+                + b.at(7, 4).distance_to(Arrow::UP);
+            let b_d_poke_count = b.at(7, 5).distance_to(Arrow::UP);
+            let c_poke_count = if (b.at(7, 4).0 + b.at(7, 6).0) % 2 == 0 {
+                0
+            } else {
+                3
+            };
+
+            let fixup_pokes = [
+                ((1, 1), a_poke_count),
+                ((2, 1), b_d_poke_count),
+                ((3, 1), c_poke_count),
+                ((4, 1), b_d_poke_count),
+            ];
+            for (poke, n) in fixup_pokes {
+                let pokes = repeat(poke).take(n);
+                all_pokes.extend(pokes.clone());
+                for (x, y) in pokes {
+                    b.poke_mut(x, y);
+                }
+            }
+        }
+
+        fn minimize_pokes(mut pokes: Vec<(u8, u8)>) -> Vec<(u8, u8)> {
+            pokes.sort_unstable_by(|(ax, ay), (bx, by)| match ay.cmp(by) {
+                Ordering::Equal => ax.cmp(bx),
+                x => x,
+            });
+            pokes
+                .into_iter()
+                .dedup_with_count()
+                .flat_map(|(count, poke)| repeat(poke).take(count % 6))
+                .collect()
+        }
+
+        let mut all_pokes = Vec::new();
+        partially_solve(&mut self, &mut all_pokes);
+        fixup(&mut self, &mut all_pokes);
+        partially_solve(&mut self, &mut all_pokes);
+        minimize_pokes(all_pokes)
     }
 }
 
@@ -218,7 +368,11 @@ macro_rules! board {
 
 #[cfg(test)]
 mod board_tests {
+    use std::iter::repeat_with;
+
     use super::*;
+    use proptest::prelude::*;
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn only_compare_arrows_inside_hexagon() {
@@ -491,6 +645,34 @@ mod board_tests {
         .unwrap()
         .to_owned();
         assert_eq!(got, want);
+    }
+
+    prop_compose! {
+        fn arb_board()(seed in any::<u64>()) -> Board {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let pokes = repeat_with(|| rng.next_u64())
+                .map(|n| n % 6)
+                .zip(Board::POSITIONS.iter())
+                .flat_map(|(n, &poke)| {
+                    repeat(poke).take(n.try_into().unwrap())
+                });
+            let mut board = Board::new();
+            for (x, y) in pokes {
+                board.poke_mut(x, y);
+            }
+            board
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn solve(mut board in arb_board()) {
+            let pokes = board.clone().solve();
+            for (x, y) in pokes {
+                board.poke_mut(x, y);
+            }
+            prop_assert!(board.aligned_to(Arrow::UP));
+        }
     }
 }
 
