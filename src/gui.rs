@@ -1,4 +1,7 @@
-use std::{io, str::FromStr, thread::sleep, time::Duration, usize};
+use std::{
+    borrow::Borrow, io, ops::Deref, str::FromStr, thread::sleep,
+    time::Duration, usize,
+};
 
 use scrap::{Capturer, Frame};
 use serde::{Deserialize, Serialize};
@@ -89,52 +92,81 @@ impl ArrowToColor {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ScreenshotAtError {
-    #[error("({x}, {y}) is outside of the screenshot ({width}x{height})")]
-    OutOfRange {
-        x: usize,
-        y: usize,
-        width: usize,
-        height: usize,
-    },
-}
-
-pub struct Screenshot {
-    pixels: Vec<Color>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenBuf {
+    frame: Vec<u8>,
     pub width: usize,
     pub height: usize,
 }
 
-impl Screenshot {
-    fn from_frame_apple_silicon(
-        f: Frame,
-        width: usize,
-        height: usize,
-    ) -> Screenshot {
-        let pixels = f
-            .chunks(4)
-            .take(width * height)
-            .map(|x| match x {
-                &[b, g, r, _] => Color { r, g, b },
-                _ => panic!("unexpected chunk from frame buffer: {:?}", x),
-            })
-            .collect();
-        Screenshot {
-            pixels,
-            width,
-            height,
+impl ScreenBuf {
+    pub fn as_view(&self) -> ScreenView {
+        ScreenView {
+            frame: &self.frame,
+            width: self.width,
+            height: self.height,
+        }
+    }
+}
+
+pub struct ScreenView<'a> {
+    frame: &'a [u8],
+    pub width: usize,
+    pub height: usize,
+}
+
+impl<'a> ScreenView<'a> {
+    fn nth_pixel_apple_silicon(&self, n: usize) -> Option<Color> {
+        if n >= self.width * self.height {
+            None
+        } else {
+            match self.frame.get((4 * n)..(4 * (n + 1))) {
+                Some(&[b, g, r, _]) => Some(Color { r, g, b }),
+                x => panic!("bad {}th pixel: {:?}", n, x),
+            }
         }
     }
 
-    pub fn take(c: &mut Capturer) -> io::Result<Screenshot> {
-        let w = c.width();
-        let h = c.height();
+    pub fn at_apple_silicon(&self, x: usize, y: usize) -> Option<Color> {
+        if x >= self.width || y >= self.height {
+            None
+        } else {
+            self.nth_pixel_apple_silicon(x + self.width * y)
+        }
+    }
+
+    pub fn to_buf(&self) -> ScreenBuf {
+        ScreenBuf {
+            frame: self.frame.to_vec(),
+            width: self.width,
+            height: self.height,
+        }
+    }
+}
+
+pub struct Screen(Capturer);
+
+impl Screen {
+    pub fn new(capturer: Capturer) -> Screen {
+        Screen(capturer)
+    }
+
+    pub fn view_and_map<F, T>(&mut self, f: F) -> io::Result<T>
+    where
+        F: FnOnce(ScreenView) -> T,
+    {
+        let Screen(capturer) = self;
+        let width = capturer.width();
+        let height = capturer.height();
 
         loop {
-            match c.frame() {
-                Ok(f) => {
-                    return Ok(Screenshot::from_frame_apple_silicon(f, w, h))
+            match capturer.frame() {
+                Ok(frame) => {
+                    return Ok(f(ScreenView {
+                        frame: &frame,
+                        width,
+                        height,
+                    }));
                 }
                 Err(err) => {
                     if err.kind() == io::ErrorKind::WouldBlock {
@@ -146,45 +178,34 @@ impl Screenshot {
             }
         }
     }
-
-    pub fn at(&self, x: usize, y: usize) -> Result<Color, ScreenshotAtError> {
-        self.pixels.get(x + self.width * y).copied().ok_or({
-            ScreenshotAtError::OutOfRange {
-                x,
-                y,
-                width: self.width,
-                height: self.height,
-            }
-        })
-    }
 }
 
-#[derive(Debug, Error)]
-pub enum DetectBoardError {
-    #[error("tried to find an arrow outside of the screen: {0}")]
-    ArrowOutsideScreenshot(#[from] ScreenshotAtError),
-}
-
-pub fn detect_board(
-    dim: &Dimensions,
-    atc: &ArrowToColor,
-    s: &Screenshot,
-) -> Result<Board, DetectBoardError> {
-    let pokes = [RowPoke::A, RowPoke::B, RowPoke::C, RowPoke::D];
-    let rows: Result<Vec<_>, _> = pokes
-        .into_iter()
-        .map(|y| {
-            let arrows: Result<Vec<_>, _> = pokes
-                .into_iter()
-                .map(|x| {
-                    let Point { x, y } = dim.arrow_position(&BoardPoke(x, y));
-                    let color = s.at(x as _, y as _)?;
-                    let arrow = atc.closest(color);
-                    Ok(arrow)
-                })
-                .collect();
-            arrows.map(|a| Row(a.try_into().unwrap()))
-        })
-        .collect();
-    rows.map(|r| Board(r.try_into().unwrap()))
-}
+// #[derive(Debug, Error)]
+// pub enum DetectBoardError {
+//     #[error("tried to find an arrow outside of the screen")]
+//     ArrowOutsideScreenshot,
+// }
+//
+// pub fn detect_board(
+//     dim: &Dimensions,
+//     atc: &ArrowToColor,
+//     s: &ScreenView,
+// ) -> Result<Board, DetectBoardError> {
+//     let pokes = [RowPoke::A, RowPoke::B, RowPoke::C, RowPoke::D];
+//     let rows: Result<Vec<_>, _> = pokes
+//         .into_iter()
+//         .map(|y| {
+//             let arrows: Result<Vec<_>, _> = pokes
+//                 .into_iter()
+//                 .map(|x| {
+//                     let Point { x, y } = dim.arrow_position(&BoardPoke(x, y));
+//                     let color = s.at(x as _, y as _)?;
+//                     let arrow = atc.closest(color);
+//                     Ok(arrow)
+//                 })
+//                 .collect();
+//             arrows.map(|a| Row(a.try_into().unwrap()))
+//         })
+//         .collect();
+//     rows.map(|r| Board(r.try_into().unwrap()))
+// }
