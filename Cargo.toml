@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.70"
+clap = { version = "4.3.16", features = ["derive"] }
 device_query = "1.1.2"
+enigo = "0.1.2"
 itertools = "0.10.5"
 proptest = "1.2.0"
 rand = "0.8.5"

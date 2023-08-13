@@ -4,13 +4,13 @@ use itertools::Itertools;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
-enum ArrowFromU8Error {
+pub enum ArrowFromU8Error {
     #[error("want value within [0, 6), but got {0}")]
     OutOfRange(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Arrow(u8);
+pub struct Arrow(pub u8);
 
 impl TryFrom<u8> for Arrow {
     type Error = ArrowFromU8Error;
@@ -50,7 +50,7 @@ impl Arrow {
 }
 
 #[derive(Debug, Clone, Eq)]
-struct Board([Arrow; 81]);
+pub struct Board([Arrow; 81]);
 
 impl PartialEq for Board {
     /// Only compares the arrows inside the hexagon.
@@ -99,7 +99,7 @@ impl Board {
         9..=9,
     ];
 
-    const POSITIONS: [(u8, u8); 37] = [
+    pub const POSITIONS: [(u8, u8); 37] = [
         // 1st row
         (1, 1),
         (2, 1),
@@ -150,6 +150,17 @@ impl Board {
         Board([Arrow::UP; 81])
     }
 
+    pub fn from_arrows<I>(arrows: I) -> Board
+    where
+        I: Iterator<Item = Arrow>,
+    {
+        let mut b = Board::new();
+        for (&(x, y), arrow) in Board::POSITIONS.iter().zip(arrows) {
+            *b.at_mut(x, y) = arrow;
+        }
+        b
+    }
+
     /// Iterates over the arrows inside the hexagon along with its x and y
     /// coordinate.
     fn arrows(&self) -> impl Iterator<Item = (usize, usize, Arrow)> + '_ {
@@ -198,10 +209,10 @@ impl Board {
         b
     }
 
-    fn solve(mut self) -> Vec<(u8, u8)> {
+    pub fn solve(mut self) -> Vec<(u8, u8)> {
         fn partially_solve(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
             const PARTIAL_SOLVE_MOVES: [((u8, u8), (u8, u8)); 30] = [
-                // 1st row
+                // 1st "row"
                 ((1, 1), (2, 2)),
                 ((2, 1), (3, 2)),
                 ((3, 1), (4, 2)),
@@ -209,7 +220,7 @@ impl Board {
                 ((1, 2), (2, 3)),
                 ((1, 3), (2, 4)),
                 ((1, 4), (2, 5)),
-                // 2nd row
+                // 2nd "row"
                 ((2, 2), (3, 3)),
                 ((3, 2), (4, 3)),
                 ((4, 2), (5, 3)),
@@ -217,7 +228,7 @@ impl Board {
                 ((2, 3), (3, 4)),
                 ((2, 4), (3, 5)),
                 ((2, 5), (3, 6)),
-                // 3rd row
+                // 3rd "row"
                 ((3, 3), (4, 4)),
                 ((4, 3), (5, 4)),
                 ((5, 3), (6, 4)),
@@ -225,17 +236,17 @@ impl Board {
                 ((3, 4), (4, 5)),
                 ((3, 5), (4, 6)),
                 ((3, 6), (4, 7)),
-                // 4th row
+                // 4th "row"
                 ((4, 4), (5, 5)),
                 ((5, 4), (6, 5)),
                 ((6, 4), (7, 5)),
                 ((4, 5), (5, 6)),
                 ((4, 6), (5, 7)),
-                // 5th row
+                // 5th "row"
                 ((5, 5), (6, 6)),
                 ((6, 5), (7, 6)),
                 ((5, 6), (6, 7)),
-                // 6th row
+                // 6th "row"
                 ((6, 6), (7, 7)),
             ];
 
