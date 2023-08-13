@@ -1,13 +1,7 @@
-use std::{
-    borrow::Borrow, io, ops::Deref, str::FromStr, thread::sleep,
-    time::Duration, usize,
-};
-
-use scrap::{Capturer, Frame};
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-
 use crate::puzzle::{Arrow, Board, BoardPoke, Row, RowPoke};
+use scrap::Capturer;
+use serde::{Deserialize, Serialize};
+use std::{io, str::FromStr, thread::sleep, time::Duration, usize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Point {

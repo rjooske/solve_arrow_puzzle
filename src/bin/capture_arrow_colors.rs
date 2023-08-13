@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
 
 use solve_arrow_puzzle::{
-    gui::{ArrowToColor, Color, Dimensions, Point, Screenshot},
+    gui::{ArrowToColor, Color, Dimensions, Point, Screen},
     puzzle::{Arrow, BoardPoke, RowPoke},
 };
 use std::{collections::HashMap, env, fs};
@@ -57,8 +57,9 @@ fn main() -> Result<()> {
     let dimensions: Dimensions =
         fs::read_to_string("dimensions.json")?.parse()?;
 
-    let mut capturer = Capturer::new(Display::primary()?)?;
-    let screenshot = Screenshot::take(&mut capturer)?;
+    let capturer = Capturer::new(Display::primary()?)?;
+    let screenshot =
+        Screen::new(capturer).view_and_map(|s| s.to_buf()).unwrap();
 
     let pokes = [RowPoke::A, RowPoke::B, RowPoke::C, RowPoke::D];
     let colors = pokes
@@ -66,9 +67,12 @@ fn main() -> Result<()> {
         .cartesian_product(pokes.into_iter())
         .map(|(y, x)| {
             let Point { x, y } = dimensions.arrow_position(&BoardPoke(x, y));
-            screenshot.at(x as _, y as _).with_context(|| {
-                format!("({}, {}) is outside the screen", x, y)
-            })
+            screenshot
+                .as_view()
+                .at_apple_silicon(x as _, y as _)
+                .with_context(|| {
+                    format!("({}, {}) is outside the screen", x, y)
+                })
         })
         .collect::<Result<Vec<_>>>()?;
 
