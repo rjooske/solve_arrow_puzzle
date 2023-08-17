@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context};
 use clap::{Parser, ValueEnum};
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Enigo, MouseButton, MouseControllable};
@@ -11,6 +11,7 @@ use solve_arrow_puzzle::{
     solve::pokes_to_align_board,
 };
 use std::{
+    mem::transmute,
     process::exit,
     thread::sleep,
     time::{Duration, Instant},
@@ -49,13 +50,20 @@ struct Args {
     game_mode: GameMode,
 }
 
-fn watch<P>(screen: &mut Screen, timeout: Duration, predicate: P) -> Result<()>
+fn watch<P>(
+    screen: &mut Screen,
+    timeout: Duration,
+    predicate: P,
+) -> anyhow::Result<()>
 where
-    P: Fn(ScreenView) -> Result<bool>,
+    P: Fn(ScreenView) -> bool,
 {
     let before = Instant::now();
     while before.elapsed() < timeout {
-        if screen.view_and_map(|v| predicate(v))?? {
+        if screen
+            .view_and_map(|v| predicate(v))
+            .context("view screen")?
+        {
             break;
         }
         sleep(Duration::from_millis(1));
@@ -154,6 +162,7 @@ impl Vector {
 #[derive(Debug, Clone, PartialEq)]
 struct Transform {
     top_arrow: Vector,
+    arrow_diameter: f64,
     axis_a: Vector,
     axis_b: Vector,
 }
@@ -175,6 +184,7 @@ impl Transform {
 
         Transform {
             top_arrow,
+            arrow_diameter,
             axis_a,
             axis_b,
         }
@@ -185,6 +195,11 @@ impl Transform {
             .scale((x - 1) as f64)
             .add(self.axis_b.scale((y - 1) as f64))
             .add(self.top_arrow)
+    }
+
+    fn index_to_click_position(&self, x: usize, y: usize) -> Vector {
+        let offset = Vector { x: 0.0, y: 1.0 }.scale(0.5 * self.arrow_diameter);
+        self.index_to_position(x, y).add(offset)
     }
 
     fn positions(&self) -> impl Iterator<Item = Vector> + '_ {
@@ -266,11 +281,150 @@ fn find_onscreen_board(
     }
 }
 
+#[derive(Debug)]
+struct CursorController {
+    enigo: Enigo,
+    wait: Duration,
+}
+
+impl CursorController {
+    fn click(&mut self, x: i32, y: i32) {
+        self.enigo.mouse_move_to(x, y);
+        sleep(self.wait);
+        self.enigo.mouse_down(MouseButton::Left);
+        sleep(self.wait);
+        self.enigo.mouse_up(MouseButton::Left);
+    }
+
+    fn click_many(&mut self, x: i32, y: i32, count: usize) {
+        self.enigo.mouse_move_to(x, y);
+        for _ in 0..count {
+            sleep(self.wait);
+            self.enigo.mouse_down(MouseButton::Left);
+            sleep(self.wait);
+            self.enigo.mouse_up(MouseButton::Left);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayerState {
+    Start,
+    WaitForAlignedOnscreenBoard,
+    WaitForUnalignedOnscreenBoard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action<'a> {
+    Nothing,
+    Solve(&'a expert::Board),
+    ClaimRewards,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlayerTransitionContext<'a> {
+    now: Instant,
+    onscreen_board: &'a OnscreenBoard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Player {
+    current: PlayerState,
+    last_transition: Instant,
+}
+
+impl Player {
+    fn new(last_transition: Instant) -> Player {
+        Player {
+            current: PlayerState::Start,
+            last_transition,
+        }
+    }
+
+    fn set_current_state(
+        &mut self,
+        ctx: PlayerTransitionContext,
+        new: PlayerState,
+    ) {
+        self.current = new;
+        self.last_transition = ctx.now;
+    }
+
+    fn transition<'a>(
+        &'a mut self,
+        ctx: PlayerTransitionContext<'a>,
+    ) -> anyhow::Result<Action<'a>> {
+        let elapsed = match ctx.now.checked_duration_since(self.last_transition)
+        {
+            Some(x) => x,
+            None => {
+                return Err(anyhow!(
+                    "`ctx.now` is earlier than `self.last_transition`"
+                ));
+            }
+        };
+
+        match (self.current, ctx.onscreen_board) {
+            (
+                PlayerState::Start | PlayerState::WaitForAlignedOnscreenBoard,
+                OnscreenBoard::Aligned,
+            ) => {
+                self.set_current_state(
+                    ctx,
+                    PlayerState::WaitForUnalignedOnscreenBoard,
+                );
+                Ok(Action::ClaimRewards)
+            }
+
+            (
+                PlayerState::Start | PlayerState::WaitForUnalignedOnscreenBoard,
+                OnscreenBoard::Unaligned(b),
+            ) => {
+                self.set_current_state(
+                    ctx,
+                    PlayerState::WaitForAlignedOnscreenBoard,
+                );
+                Ok(Action::Solve(b))
+            }
+
+            // After solving the board until the screen updates. If the board
+            // doesn't align, it's probably because some clicks didn't register.
+            // Try solving the board again.
+            (
+                PlayerState::WaitForAlignedOnscreenBoard,
+                OnscreenBoard::Unaligned(b),
+            ) => {
+                if elapsed > Duration::from_secs(1) {
+                    self.set_current_state(
+                        ctx,
+                        PlayerState::WaitForAlignedOnscreenBoard,
+                    );
+                    Ok(Action::Solve(b))
+                } else {
+                    Ok(Action::Nothing)
+                }
+            }
+
+            // After hitting the claim button until the screen updates
+            (
+                PlayerState::WaitForUnalignedOnscreenBoard,
+                OnscreenBoard::Aligned,
+            ) => {
+                if elapsed > Duration::from_secs(1) {
+                    Err(anyhow!("waited for unaligned board for {:?}", elapsed))
+                } else {
+                    Ok(Action::Nothing)
+                }
+            }
+        }
+    }
+}
+
 fn main_play_expert() -> ! {
+    // FIXME: don't hardcode these values
     let top = Vector { x: 225.0, y: 414.0 };
     let bottom = Vector { x: 228.0, y: 806.0 };
     let claim = Vector { x: 272.0, y: 939.0 };
-
     let red_to_onscreen_arrow: Vec<(u8, OnscreenArrow)> = vec![
         (27, OnscreenArrow::Aligned),
         (17, OnscreenArrow::Unaligned(expert::Arrow(0))),
@@ -283,64 +437,99 @@ fn main_play_expert() -> ! {
     // background red: 51
 
     let transform = Transform::new(top, bottom);
+    let mut player = Player::new(Instant::now());
 
-    let capturer = Capturer::new(Display::primary().unwrap()).unwrap();
-    let mut screen = Screen::new(capturer);
+    let mut screen =
+        Screen::new(Capturer::new(Display::primary().unwrap()).unwrap());
     let device_state = DeviceState::new();
-    let mut enigo = Enigo::new();
-
-    let arrow_reds = screen
-        .view_and_map(|view| {
-            transform
-                .positions()
-                .map(|p| {
-                    view.at_apple_silicon(p.x as usize, p.y as usize).unwrap().r
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap();
-
-    let board = find_onscreen_board(&red_to_onscreen_arrow, &arrow_reds, 2)
-        .context("find onscreen board")
-        .unwrap();
-    let board = match board {
-        OnscreenBoard::Aligned => panic!("aligned"),
-        OnscreenBoard::Unaligned(b) => b,
+    let mut cursor = CursorController {
+        enigo: Enigo::new(),
+        wait: Duration::from_millis(1),
     };
 
-    println!("{}", board);
-
-    let solve_pokes = board.solve().into_iter().dedup_with_count();
-    let solve_clicks = solve_pokes.map(|(count, (x, y))| {
-        (count, transform.index_to_position(x as usize, y as usize))
-    });
-
-    fn click(enigo: &mut Enigo, x: i32, y: i32, count: usize, delay: Duration) {
-        enigo.mouse_move_to(x, y);
-        sleep(delay);
-        for _ in 0..count {
-            enigo.mouse_down(MouseButton::Left);
-            enigo.mouse_up(MouseButton::Left);
-            sleep(delay);
-        }
+    while device_state.get_keys().contains(&Keycode::Backspace) {
+        sleep(Duration::from_millis(1));
     }
+    while !device_state.get_keys().contains(&Keycode::Backspace) {
+        sleep(Duration::from_millis(1));
+    }
+    sleep(Duration::from_secs(1));
 
-    sleep(Duration::from_secs(3));
+    while !device_state.get_keys().contains(&Keycode::Backspace) {
+        let arrow_reds = screen
+            .view_and_map(|view| {
+                transform
+                    .positions()
+                    .map(|p| {
+                        match view.at_apple_silicon(p.x as usize, p.y as usize)
+                        {
+                            Some(c) => Ok(c.r),
+                            None => Err(anyhow!(
+                                "({}, {}) is outside the screen",
+                                p.x,
+                                p.y
+                            )),
+                        }
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
+            })
+            .context("view screen")
+            .unwrap()
+            .context("map screen view")
+            .unwrap();
 
-    for (count, p) in solve_clicks {
-        click(
-            &mut enigo,
-            p.x as i32,
-            p.y as i32,
-            count,
-            Duration::from_millis(1),
-        );
+        let onscreen_board =
+            find_onscreen_board(&red_to_onscreen_arrow, &arrow_reds, 2)
+                .context("find onscreen board")
+                .unwrap();
+
+        let action = player.transition(PlayerTransitionContext {
+            now: Instant::now(),
+            onscreen_board: &onscreen_board,
+        });
+        let action = match action {
+            Ok(x) => x,
+            Err(err) => panic!("player transition: {}", err),
+        };
+        match action {
+            Action::Nothing => sleep(Duration::from_millis(10)),
+            Action::Solve(board) => {
+                let solve_indices = board.clone().solve();
+                let mut solve_clicks = Vec::<(usize, (u8, u8))>::with_capacity(
+                    solve_indices.len(),
+                );
+                for index in solve_indices {
+                    match solve_clicks.last_mut() {
+                        Some(last) if last.1 == index => last.0 += 1,
+                        _ => solve_clicks.push((1, index)),
+                    }
+                }
+                let solve_clicks = solve_clicks
+                    .into_iter()
+                    .map(|(count, (x, y))| {
+                        (
+                            count,
+                            transform.index_to_click_position(
+                                x as usize, y as usize,
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                for (count, p) in solve_clicks {
+                    cursor.click_many(p.x as i32, p.y as i32, count);
+                }
+            }
+            Action::ClaimRewards => {
+                cursor.click(claim.x as i32, claim.y as i32)
+            }
+        }
     }
 
     exit(0);
 }
 
-fn main() -> Result<()> {
+fn main() {
     let args = Args::parse();
 
     match (args.command, args.game_mode) {
