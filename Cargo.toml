@@ -9,6 +9,7 @@ clap = { version = "4.3.16", features = ["derive"] }
 device_query = "1.1.2"
 enigo = "0.1.2"
 itertools = "0.10.5"
+nix = { version = "0.28.0", features = ["fs"] }
 proptest = "1.2.0"
 rand = "0.8.5"
 rayon = "1.7.0"
