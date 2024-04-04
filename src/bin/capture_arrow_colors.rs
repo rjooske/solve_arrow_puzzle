@@ -22,10 +22,7 @@ fn parse_arg(arg: &str) -> Result<Vec<Arrow>> {
         .collect::<Result<Vec<_>>>()
 }
 
-fn parse_arrow_to_color(
-    arrows: &[Arrow],
-    colors: &[Color],
-) -> Result<ArrowToColor> {
+fn parse_arrow_to_color(arrows: &[Arrow], colors: &[Color]) -> Result<ArrowToColor> {
     fn f(map: &HashMap<&Arrow, Vec<&Color>>, a: &Arrow) -> Result<Color> {
         let c = **map
             .get(a)
@@ -50,16 +47,13 @@ fn parse_arrow_to_color(
 }
 
 fn main() -> Result<()> {
-    let [_, arg]: [String; 2] =
-        env::args().collect::<Vec<_>>().try_into().unwrap();
+    let [_, arg]: [String; 2] = env::args().collect::<Vec<_>>().try_into().unwrap();
     let arrows = parse_arg(&arg)?;
 
-    let dimensions: Dimensions =
-        fs::read_to_string("dimensions.json")?.parse()?;
+    let dimensions: Dimensions = fs::read_to_string("dimensions.json")?.parse()?;
 
     let capturer = Capturer::new(Display::primary()?)?;
-    let screenshot =
-        Screen::new(capturer).view_and_map(|s| s.to_buf()).unwrap();
+    let screenshot = Screen::new(capturer).view_and_map(|s| s.to_buf()).unwrap();
 
     let pokes = [RowPoke::A, RowPoke::B, RowPoke::C, RowPoke::D];
     let colors = pokes
@@ -70,9 +64,7 @@ fn main() -> Result<()> {
             screenshot
                 .as_view()
                 .at_apple_silicon(x as _, y as _)
-                .with_context(|| {
-                    format!("({}, {}) is outside the screen", x, y)
-                })
+                .with_context(|| format!("({}, {}) is outside the screen", x, y))
         })
         .collect::<Result<Vec<_>>>()?;
 

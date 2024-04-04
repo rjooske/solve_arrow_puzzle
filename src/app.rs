@@ -206,9 +206,7 @@ fn find_onscreen_board(
         })
         .collect::<Vec<_>>();
 
-    if !(unaligned_arrows.is_empty()
-        || unaligned_arrows.len() == diff_arrow_pairs.len())
-    {
+    if !(unaligned_arrows.is_empty() || unaligned_arrows.len() == diff_arrow_pairs.len()) {
         bail!(
             "board is neither aligned nor unaligned: {:?}",
             diff_arrow_pairs
@@ -258,11 +256,7 @@ impl Player {
         }
     }
 
-    fn set_current_state(
-        &mut self,
-        ctx: PlayerTransitionContext,
-        new: PlayerState,
-    ) {
+    fn set_current_state(&mut self, ctx: PlayerTransitionContext, new: PlayerState) {
         self.current = new;
         self.last_transition = ctx.now;
     }
@@ -271,8 +265,7 @@ impl Player {
         &'a mut self,
         ctx: PlayerTransitionContext<'a>,
     ) -> anyhow::Result<Action<'a>> {
-        let elapsed = match ctx.now.checked_duration_since(self.last_transition)
-        {
+        let elapsed = match ctx.now.checked_duration_since(self.last_transition) {
             Some(x) => x,
             None => bail!("`ctx.now` is earlier than `self.last_transition`"),
         };
@@ -282,10 +275,7 @@ impl Player {
                 PlayerState::Start | PlayerState::WaitForAlignedOnscreenBoard,
                 OnscreenBoard::Aligned,
             ) => {
-                self.set_current_state(
-                    ctx,
-                    PlayerState::WaitForUnalignedOnscreenBoard,
-                );
+                self.set_current_state(ctx, PlayerState::WaitForUnalignedOnscreenBoard);
                 Ok(Action::ClaimRewards)
             }
 
@@ -293,25 +283,16 @@ impl Player {
                 PlayerState::Start | PlayerState::WaitForUnalignedOnscreenBoard,
                 OnscreenBoard::Unaligned(b),
             ) => {
-                self.set_current_state(
-                    ctx,
-                    PlayerState::WaitForAlignedOnscreenBoard,
-                );
+                self.set_current_state(ctx, PlayerState::WaitForAlignedOnscreenBoard);
                 Ok(Action::Solve(b))
             }
 
             // After solving the board until the screen updates. If the board
             // doesn't align, it's probably because some clicks didn't register.
             // Try solving the board again.
-            (
-                PlayerState::WaitForAlignedOnscreenBoard,
-                OnscreenBoard::Unaligned(b),
-            ) => {
+            (PlayerState::WaitForAlignedOnscreenBoard, OnscreenBoard::Unaligned(b)) => {
                 if elapsed > Duration::from_secs(1) {
-                    self.set_current_state(
-                        ctx,
-                        PlayerState::WaitForAlignedOnscreenBoard,
-                    );
+                    self.set_current_state(ctx, PlayerState::WaitForAlignedOnscreenBoard);
                     Ok(Action::Solve(b))
                 } else {
                     Ok(Action::Nothing)
@@ -319,10 +300,7 @@ impl Player {
             }
 
             // After hitting the claim button until the screen updates
-            (
-                PlayerState::WaitForUnalignedOnscreenBoard,
-                OnscreenBoard::Aligned,
-            ) => {
+            (PlayerState::WaitForUnalignedOnscreenBoard, OnscreenBoard::Aligned) => {
                 if elapsed > Duration::from_secs(5) {
                     Err(anyhow!("waited for unaligned board for {:?}", elapsed))
                 } else {
@@ -399,9 +377,8 @@ where
         // let bytes = ps.iter().flat_map(|&p| [p.r, p.g, p.b]).collect_vec();
         // write("zzz", bytes).unwrap();
 
-        let onscreen_board =
-            find_onscreen_board(&red_to_onscreen_arrow, &arrow_reds, 2.0)
-                .context("find onscreen board")?;
+        let onscreen_board = find_onscreen_board(&red_to_onscreen_arrow, &arrow_reds, 2.0)
+            .context("find onscreen board")?;
 
         let action = player
             .transition(PlayerTransitionContext {
@@ -412,9 +389,11 @@ where
         match action {
             Action::Nothing => sleep(Duration::from_millis(10)),
             Action::Solve(board) => {
-                let taps = board.clone().solve().into_iter().map(|(ix, iy)| {
-                    transform.index_to_click_position(ix, iy).round_as_i32()
-                });
+                let taps = board
+                    .clone()
+                    .solve()
+                    .into_iter()
+                    .map(|(ix, iy)| transform.index_to_click_position(ix, iy).round_as_i32());
                 screen.tap_many(taps);
             }
             Action::ClaimRewards => {

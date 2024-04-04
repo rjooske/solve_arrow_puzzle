@@ -88,13 +88,7 @@ impl HeadlessScreen {
                     ffmpeg_stdout.read_exact(&mut rgbs).unwrap();
                     let mut pixels = pixels.lock().unwrap();
                     pixels.clear();
-                    pixels.extend(
-                        rgbs.iter().tuples().map(|(&r, &g, &b)| Pixel {
-                            r,
-                            g,
-                            b,
-                        }),
-                    );
+                    pixels.extend(rgbs.iter().tuples().map(|(&r, &g, &b)| Pixel { r, g, b }));
                 }
             });
         }

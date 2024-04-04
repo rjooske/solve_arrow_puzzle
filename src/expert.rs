@@ -77,8 +77,7 @@ impl Display for Board {
                     })
                     .collect::<Vec<_>>();
                 let padding = " ".repeat(3 * (4 - arrows.len()));
-                let row =
-                    arrows.into_iter().map(|a| a.to_string()).join("     ");
+                let row = arrows.into_iter().map(|a| a.to_string()).join("     ");
                 padding + &row
             })
             .join("\n");
@@ -261,8 +260,8 @@ impl Board {
         }
 
         fn fixup(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
-            let a_poke_count = Arrow::UP.distance_to(b.at(7, 5))
-                + b.at(7, 4).distance_to(Arrow::UP);
+            let a_poke_count =
+                Arrow::UP.distance_to(b.at(7, 5)) + b.at(7, 4).distance_to(Arrow::UP);
             let b_d_poke_count = b.at(7, 5).distance_to(Arrow::UP);
             let c_poke_count = if (b.at(7, 4).0 + b.at(7, 6).0) % 2 == 0 {
                 0
