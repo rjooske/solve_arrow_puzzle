@@ -1,10 +1,10 @@
 pub mod android;
 pub mod app;
+pub mod device;
 pub mod expert;
 pub mod gui;
 pub mod hex;
 pub mod lut;
 pub mod puzzle;
-pub mod screen;
 pub mod solve;
 pub mod time;
