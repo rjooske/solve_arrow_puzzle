@@ -1,10 +1,11 @@
 use std::{
     fmt::Write as _,
-    io::{Read as _, Write as _},
-    process::{ChildStdin, ChildStdout, Command, Stdio},
+    io::{Read, Write as _},
+    process::{ChildStdin, Command, Stdio},
 };
 
 use anyhow::Context;
+use flate2::read::GzDecoder;
 use itertools::Itertools;
 use phf::phf_map;
 
@@ -103,10 +104,10 @@ impl Transform {
         }
     }
 
-    fn index_to_position(&self, x: u8, y: u8) -> Vec2 {
+    fn index_to_position(&self, x: usize, y: usize) -> Vec2 {
         self.axis_a
-            .scale((x - 1) as f64)
-            .add(self.axis_b.scale((y - 1) as f64))
+            .scale(x as f64)
+            .add(self.axis_b.scale(y as f64))
             .add(self.top_arrow)
     }
 }
@@ -114,15 +115,12 @@ impl Transform {
 #[derive(Debug)]
 /// FIXME: currently doesn't clean up anything
 pub struct HeadlessDevice {
-    transform: Transform,
+    width: usize,
     claim_button: Vec2,
-    rgbas: Vec<u8>,
+    arrow_positions: Hex<(usize, usize)>,
+    screencap_output: Vec<u8>,
     adb_shell_input_stdin: ChildStdin,
-    adb_shell_screencap_stdin: ChildStdin,
-    adb_shell_screencap_stdout: ChildStdout,
 }
-
-// background: 51
 
 static RED_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
     27u8 => Arrow(0),
@@ -134,72 +132,32 @@ static RED_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
     85u8 => Arrow(5),
 };
 
-// FIXME: don't hardcode these values
-// onscreen
-// let top = Vec2 { x: 225.0, y: 414.0 };
-// let bottom = Vec2 { x: 228.0, y: 806.0 };
-// let claim = Vec2 { x: 272.0, y: 939.0 };
-// let red_to_onscreen_arrow: Vec<(u8, OnscreenArrow)> = vec![
-//     (27, OnscreenArrow::Aligned),
-//     (17, OnscreenArrow::Unaligned(Arrow(0))),
-//     (30, OnscreenArrow::Unaligned(Arrow(1))),
-//     (44, OnscreenArrow::Unaligned(Arrow(2))),
-//     (57, OnscreenArrow::Unaligned(Arrow(3))),
-//     (71, OnscreenArrow::Unaligned(Arrow(4))),
-//     (85, OnscreenArrow::Unaligned(Arrow(5))),
-// ];
-// background red: 51
-
-// headless
-// let top = Vec2 { x: 236.0, y: 357.0 };
-// let bottom = Vec2 { x: 236.0, y: 767.0 };
-// let claim = Vec2 { x: 236.0, y: 904.0 };
-// let red_to_onscreen_arrow: Vec<(u8, OnscreenArrow)> = vec![
-//     (25, OnscreenArrow::Aligned),
-//     (16, OnscreenArrow::Unaligned(Arrow(0))),
-//     (28, OnscreenArrow::Unaligned(Arrow(1))),
-//     (42, OnscreenArrow::Unaligned(Arrow(2))),
-//     (55, OnscreenArrow::Unaligned(Arrow(3))),
-//     (69, OnscreenArrow::Unaligned(Arrow(4))),
-//     (83, OnscreenArrow::Unaligned(Arrow(5))),
-// ];
-// background red: 49
-
 impl Device for HeadlessDevice {
-    type DetectBoardError = anyhow::Error;
-    type TapBoardError = anyhow::Error;
-    type TapClaimButtonError = anyhow::Error;
+    fn detect_board(&mut self) -> anyhow::Result<Board> {
+        let output = Command::new("adb")
+            .arg("shell")
+            .arg("screencap | gzip -c -k -1 /dev/stdin")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+        self.screencap_output.clear();
+        GzDecoder::new(output.stdout.as_slice())
+            .read_to_end(&mut self.screencap_output)
+            .unwrap();
 
-    fn detect_board(&mut self) -> Result<Board, Self::DetectBoardError> {
-        self.adb_shell_screencap_stdin
-            .write_all(b"screencap\n")
-            .context("write to adb shell stdin for screencap")?;
-        let mut width = [0u8; 4];
-        let mut height = [0u8; 4];
-        let mut pixel_format = [0u8; 4];
-        self.adb_shell_screencap_stdout
-            .read_exact(&mut width)
-            .context("read screen width")?;
-        self.adb_shell_screencap_stdout
-            .read_exact(&mut height)
-            .context("read screen height")?;
-        self.adb_shell_screencap_stdout
-            .read_exact(&mut pixel_format)
-            .context("read pixel format")?;
-        self.adb_shell_screencap_stdout
-            .read_exact(&mut [0; 4])
-            .context("read padding before rgba")?;
-        let width = u32::from_le_bytes(width) as usize;
-        let height = u32::from_le_bytes(height) as usize;
-        self.rgbas.resize(4 * width * height, 0);
-        self.adb_shell_screencap_stdout
-            .read_exact(&mut self.rgbas)
-            .context("read rgba")?;
-        let arrows: Vec<_> = Board::POSITIONS
-            .into_iter()
-            .map(|(x, y)| {
-                let (x, y) = self.transform.index_to_position(x, y).round_as_usize();
-                let r = self.rgbas[4 * (x + width * y)];
+        let rgbas = self
+            .screencap_output
+            .get(16..)
+            .context("screencap output too small")?;
+        let arrows: Vec<_> = self
+            .arrow_positions
+            .enumerate()
+            .map(|(_, _, &(x, y))| {
+                let r = rgbas[4 * (x + self.width * y)];
                 RED_TO_ARROW
                     .get(&r)
                     .copied()
@@ -209,24 +167,21 @@ impl Device for HeadlessDevice {
         Ok(Board::from_arrows(arrows))
     }
 
-    fn tap_board(&mut self, taps: Hex<u8>) -> Result<(), Self::TapBoardError> {
+    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()> {
         let mut commands = String::new();
-        for (x, y, &n) in taps.enumerate() {
-            let x = x as u8 + 1;
-            let y = y as u8 + 1;
-            let p = self.transform.index_to_position(x, y);
+        for ((_, _, &n), (_, _, &(x, y))) in taps.enumerate().zip(self.arrow_positions.enumerate())
+        {
             for _ in 0..n {
-                writeln!(commands, "input tap {} {} &", p.x, p.y).unwrap();
+                writeln!(commands, "input tap {} {} &", x, y).unwrap();
             }
         }
-        writeln!(commands, "wait").unwrap();
         self.adb_shell_input_stdin
             .write_all(commands.as_bytes())
             .context("write to adb shell stdin for input")?;
         Ok(())
     }
 
-    fn tap_claim_button(&mut self) -> Result<(), Self::TapClaimButtonError> {
+    fn tap_claim_button(&mut self) -> anyhow::Result<()> {
         writeln!(
             self.adb_shell_input_stdin,
             "input tap {} {}",
@@ -238,7 +193,14 @@ impl Device for HeadlessDevice {
 }
 
 impl HeadlessDevice {
-    pub fn new(transform: Transform, claim_button: Vec2) -> anyhow::Result<HeadlessDevice> {
+    pub fn new(
+        width: usize,
+        transform: Transform,
+        claim_button: Vec2,
+    ) -> anyhow::Result<HeadlessDevice> {
+        let arrow_positions =
+            Hex::from_fn(|x, y| transform.index_to_position(x, y).round_as_usize());
+
         let mut adb_shell_input = Command::new("adb")
             .arg("shell")
             .stdin(Stdio::piped())
@@ -246,30 +208,16 @@ impl HeadlessDevice {
             .stderr(Stdio::null())
             .spawn()
             .context("spawn adb shell for input")?;
-        let mut adb_shell_screencap = Command::new("adb")
-            .arg("shell")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("spawn adb shell for screencap")?;
 
         Ok(HeadlessDevice {
-            transform,
+            width,
             claim_button,
-            rgbas: Vec::new(),
+            arrow_positions,
+            screencap_output: Vec::new(),
             adb_shell_input_stdin: adb_shell_input
                 .stdin
                 .take()
                 .context("take adb shell stdin for input")?,
-            adb_shell_screencap_stdin: adb_shell_screencap
-                .stdin
-                .take()
-                .context("take adb shell stdin for screencap")?,
-            adb_shell_screencap_stdout: adb_shell_screencap
-                .stdout
-                .take()
-                .context("take adb shell stdout for screencap")?,
         })
     }
 }

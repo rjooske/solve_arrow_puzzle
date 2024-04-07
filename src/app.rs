@@ -1,29 +1,13 @@
-use std::{
-    thread::sleep,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context};
 
-use crate::{
-    expert::{Arrow, Board},
-    hex::Hex,
-};
+use crate::{expert::Board, hex::Hex};
 
 pub trait Device {
-    type DetectBoardError;
-    type TapBoardError;
-    type TapClaimButtonError;
-
-    fn detect_board(&mut self) -> Result<Board, Self::DetectBoardError>;
-    fn tap_board(&mut self, taps: Hex<u8>) -> Result<(), Self::TapBoardError>;
-    fn tap_claim_button(&mut self) -> Result<(), Self::TapClaimButtonError>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OnscreenArrow {
-    Aligned,
-    Unaligned(Arrow),
+    fn detect_board(&mut self) -> anyhow::Result<Board>;
+    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()>;
+    fn tap_claim_button(&mut self) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,10 +119,7 @@ where
     let mut player = Player::new(Instant::now());
 
     loop {
-        // FIXME:
-        let Ok(board) = device.detect_board() else {
-            panic!()
-        };
+        let board = device.detect_board().context("detect board")?;
         let action = player
             .transition(PlayerTransitionContext {
                 now: Instant::now(),
@@ -146,7 +127,7 @@ where
             })
             .context("player transition")?;
         match action {
-            Action::Wait => sleep(Duration::from_millis(10)),
+            Action::Wait => {}
             Action::Solve => {
                 let mut taps = Hex::from_fn(|_, _| 0u8);
                 for (x, y) in board.solve() {
@@ -154,12 +135,13 @@ where
                     let y = y as usize - 1;
                     *taps.at_mut(x, y).unwrap() += 1;
                 }
-                // FIXME:
-                let _ = device.tap_board(taps);
+                for (_, _, n) in taps.enumerate_mut() {
+                    *n %= 6;
+                }
+                device.tap_board(taps).context("tap board")?;
             }
             Action::ClaimRewards => {
-                // FIXME:
-                let _ = device.tap_claim_button();
+                device.tap_claim_button().context("tap claim button")?;
             }
         }
     }

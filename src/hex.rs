@@ -1,5 +1,16 @@
 use std::array;
 
+const fn indices(positions: [(usize, usize); 37]) -> [usize; 37] {
+    let mut out = [0; 37];
+    let mut i = 0;
+    while i < 37 {
+        let (x, y) = positions[i];
+        out[i] = x + 7 * y;
+        i += 1;
+    }
+    out
+}
+
 const fn position_to_index(positions: [(usize, usize); 37]) -> [[Option<usize>; 7]; 7] {
     let mut out = [[None; 7]; 7];
     let mut i = 0;
@@ -87,7 +98,7 @@ impl<T> Hex<T> {
         (5, 6),
         (6, 6),
     ];
-
+    const INDICES: [usize; 37] = indices(Self::POSITIONS);
     const POSITION_TO_INDEX: [[Option<usize>; 7]; 7] = position_to_index(Self::POSITIONS);
 
     pub fn from_fn<F>(mut f: F) -> Hex<T>
@@ -95,8 +106,7 @@ impl<T> Hex<T> {
         F: FnMut(usize, usize) -> T,
     {
         let mut hex = Hex(array::from_fn(|_| None));
-        for (x, y) in Self::POSITIONS {
-            let i = Self::POSITION_TO_INDEX[y][x].unwrap();
+        for (i, (x, y)) in Self::INDICES.into_iter().zip(Self::POSITIONS) {
             hex.0[i] = Some(f(x, y));
         }
         hex

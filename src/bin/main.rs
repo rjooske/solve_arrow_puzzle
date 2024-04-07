@@ -85,6 +85,7 @@ fn main_setup_expert() -> ! {
 
 fn main_play_expert() -> anyhow::Result<()> {
     let device = HeadlessDevice::new(
+        1440,
         Transform::new(Vec2::new(721.0, 1094.0), Vec2::new(721.0, 2346.0)),
         Vec2::new(721.0, 2750.0),
     )
