@@ -8,6 +8,7 @@ anyhow = "1.0.70"
 clap = { version = "4.3.16", features = ["derive"] }
 device_query = "1.1.2"
 enigo = "0.1.2"
+flate2 = "1.0.28"
 itertools = "0.10.5"
 phf = { version = "0.11.2", features = ["macros"] }
 proptest = "1.2.0"
