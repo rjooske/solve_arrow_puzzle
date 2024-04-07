@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use device_query::{DeviceQuery, DeviceState};
 use solve_arrow_puzzle::{
     app::play,
-    screen::{HeadlessDevice, Transform, Vec2},
+    device::{HeadlessDevice, Transform, Vec2},
 };
 
 #[derive(Debug, Parser)]
