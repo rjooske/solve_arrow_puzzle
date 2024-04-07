@@ -151,7 +151,7 @@ impl Board {
 
     pub fn from_arrows<I>(arrows: I) -> Board
     where
-        I: Iterator<Item = Arrow>,
+        I: IntoIterator<Item = Arrow>,
     {
         let mut b = Board::new();
         for (&(x, y), arrow) in Board::POSITIONS.iter().zip(arrows) {
@@ -170,12 +170,8 @@ impl Board {
         })
     }
 
-    fn aligned(&self) -> bool {
-        self.arrows().map(|(_, _, a)| a).all_equal()
-    }
-
-    fn aligned_to(&self, a: Arrow) -> bool {
-        self.at(1, 1) == a && self.aligned()
+    pub fn is_solved(&self) -> bool {
+        self.arrows().all(|(_, _, a)| a == Arrow::UP)
     }
 
     fn at_mut(&mut self, x: u8, y: u8) -> &mut Arrow {
@@ -407,69 +403,6 @@ mod board_tests {
     }
 
     #[test]
-    fn not_aligned() {
-        let b = board!(
-                     0
-                  2     2
-               0     0     0
-            2     2     2     2
-               0     0     0
-            2     2     2     2
-               0     0     0
-            2     2     2     2
-               0     0     0
-            2     2     2     2
-               0     0     0
-                  2     2
-                     0
-        )
-        .unwrap();
-        assert!(!b.aligned())
-    }
-
-    #[test]
-    fn aligned() {
-        let b = board!(
-                     3
-                  3     3
-               3     3     3
-            3     3     3     3
-               3     3     3
-            3     3     3     3
-               3     3     3
-            3     3     3     3
-               3     3     3
-            3     3     3     3
-               3     3     3
-                  3     3
-                     3
-        )
-        .unwrap();
-        assert!(b.aligned())
-    }
-
-    #[test]
-    fn aligned_to_0() {
-        let b = board!(
-                     0
-                  0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-                  0     0
-                     0
-        )
-        .unwrap();
-        assert!(b.aligned_to(Arrow::try_from(0).unwrap()))
-    }
-
-    #[test]
     fn poke_center() {
         let got = board!(
                      4
@@ -681,7 +614,7 @@ mod board_tests {
             for (x, y) in pokes {
                 board.poke_mut(x, y);
             }
-            prop_assert!(board.aligned_to(Arrow::UP));
+            prop_assert!(board.is_solved());
         }
     }
 }
