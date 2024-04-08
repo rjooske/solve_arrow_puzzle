@@ -92,7 +92,7 @@ impl Player {
             // doesn't align, it's probably because some clicks didn't register.
             // Try solving the board again.
             (PlayerState::WaitForSolvedOnscreenBoard, OnscreenBoard::Unsolved) => {
-                if elapsed > Duration::from_secs(5) {
+                if elapsed > Duration::from_secs(2) {
                     self.set_current_state(ctx, PlayerState::WaitForSolvedOnscreenBoard);
                     Ok(Action::Solve)
                 } else {
@@ -102,7 +102,7 @@ impl Player {
 
             // After hitting the claim button until the screen updates
             (PlayerState::WaitForUnsolvedOnscreenBoard, OnscreenBoard::Solved) => {
-                if elapsed > Duration::from_secs(5) {
+                if elapsed > Duration::from_secs(2) {
                     Err(anyhow!("waited for unsolved board for {:?}", elapsed))
                 } else {
                     Ok(Action::Wait)
@@ -129,6 +129,7 @@ where
         match action {
             Action::Wait => {}
             Action::Solve => {
+                // FIXME:
                 let mut taps = Hex::from_fn(|_, _| 0u8);
                 for (x, y) in board.solve() {
                     let x = x as usize - 1;

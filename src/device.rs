@@ -1,13 +1,18 @@
 use std::{
-    fmt::Write as _,
-    io::{Read, Write as _},
-    process::{ChildStdin, Command, Stdio},
+    fmt::{Debug, Write as _},
+    io::{self, Read, Write as _},
+    process::{Child, ChildStdin, Command, Stdio},
+    thread::sleep,
+    time::Duration,
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
+use device_query::{DeviceQuery, DeviceState, Keycode};
+use enigo::{Enigo, MouseButton, MouseControllable};
 use flate2::read::GzDecoder;
 use itertools::Itertools;
 use phf::phf_map;
+use scrap::{Capturer, Display};
 
 use crate::{
     app::Device,
@@ -113,12 +118,12 @@ impl Transform {
 }
 
 #[derive(Debug)]
-/// FIXME: currently doesn't clean up anything
 pub struct HeadlessDevice {
     width: usize,
     claim_button: Vec2,
     arrow_positions: Hex<(usize, usize)>,
     screencap_output: Vec<u8>,
+    adb_shell_input: Child,
     adb_shell_input_stdin: ChildStdin,
 }
 
@@ -131,6 +136,13 @@ static RED_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
     71u8 => Arrow(4),
     85u8 => Arrow(5),
 };
+
+impl Drop for HeadlessDevice {
+    fn drop(&mut self) {
+        let _ = self.adb_shell_input.kill();
+        let _ = self.adb_shell_input.wait();
+    }
+}
 
 impl Device for HeadlessDevice {
     fn detect_board(&mut self) -> anyhow::Result<Board> {
@@ -218,6 +230,179 @@ impl HeadlessDevice {
                 .stdin
                 .take()
                 .context("take adb shell stdin for input")?,
+            adb_shell_input,
+        })
+    }
+}
+
+struct ScreenView<'a> {
+    bgras: &'a [u8],
+    width: usize,
+}
+
+struct Screen(Capturer);
+
+impl Debug for Screen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Screen").field(&"-").finish()
+    }
+}
+
+impl Screen {
+    fn new(capturer: Capturer) -> Screen {
+        Screen(capturer)
+    }
+
+    fn view_and_map<F, T>(&mut self, f: F) -> io::Result<T>
+    where
+        F: FnOnce(ScreenView) -> T,
+    {
+        let Screen(capturer) = self;
+        let width = capturer.width();
+
+        loop {
+            match capturer.frame() {
+                Ok(frame) => {
+                    return Ok(f(ScreenView {
+                        bgras: &frame,
+                        width,
+                    }));
+                }
+                Err(err) => {
+                    if err.kind() == io::ErrorKind::WouldBlock {
+                        sleep(Duration::from_millis(1));
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct OnscreenDevice {
+    arrow_positions: Hex<(i32, i32)>,
+    claim_button_x: i32,
+    claim_button_y: i32,
+    device_state: DeviceState,
+    screen: Screen,
+    enigo: Enigo,
+    scrcpy: Child,
+}
+
+impl Drop for OnscreenDevice {
+    fn drop(&mut self) {
+        let _ = self.scrcpy.kill();
+        let _ = self.scrcpy.wait();
+    }
+}
+
+impl Device for OnscreenDevice {
+    fn detect_board(&mut self) -> anyhow::Result<Board> {
+        if self.device_state.get_keys().contains(&Keycode::Backspace) {
+            bail!("interrupted");
+        }
+        if let Some(status) = self.scrcpy.try_wait().context("try waiting for scrcpy")? {
+            bail!("scrcpy exited: {}", status);
+        }
+
+        self.screen
+            .view_and_map(|view| {
+                let arrows: Vec<_> = self
+                    .arrow_positions
+                    .enumerate()
+                    .map(|(_, _, &(x, y))| {
+                        let x = x as usize;
+                        let y = y as usize;
+                        let r = view.bgras[4 * (x + view.width * y) + 2];
+                        RED_TO_ARROW
+                            .get(&r)
+                            .copied()
+                            .with_context(|| format!("no arrows correspond to red value {}", r))
+                    })
+                    .try_collect()?;
+                anyhow::Ok(Board::from_arrows(arrows))
+            })
+            .context("view screen")?
+            .context("map screen view")
+    }
+
+    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()> {
+        let taps = taps
+            .enumerate()
+            .zip(self.arrow_positions.enumerate())
+            .filter_map(
+                |((_, _, &n), (_, _, &(x, y)))| {
+                    if n == 0 {
+                        None
+                    } else {
+                        Some((x, y, n))
+                    }
+                },
+            );
+        for (x, y, n) in taps {
+            self.enigo.mouse_move_to(x + 20, y);
+            sleep(Duration::from_micros(1000));
+            for _ in 0..n {
+                self.enigo.mouse_down(MouseButton::Left);
+                // sleep(Duration::from_micros(1000));
+                self.enigo.mouse_up(MouseButton::Left);
+                sleep(Duration::from_micros(1000));
+            }
+        }
+        Ok(())
+    }
+
+    fn tap_claim_button(&mut self) -> anyhow::Result<()> {
+        self.enigo
+            .mouse_move_to(self.claim_button_x, self.claim_button_y);
+        sleep(Duration::from_micros(1000));
+        self.enigo.mouse_down(MouseButton::Left);
+        sleep(Duration::from_micros(1000));
+        self.enigo.mouse_up(MouseButton::Left);
+        sleep(Duration::from_micros(1000));
+        Ok(())
+    }
+}
+
+impl OnscreenDevice {
+    pub fn new(transform: Transform, claim_button: Vec2) -> anyhow::Result<OnscreenDevice> {
+        let arrow_positions = Hex::from_fn(|x, y| transform.index_to_position(x, y).round_as_i32());
+        let (claim_button_x, claim_button_y) = claim_button.round_as_i32();
+        let screen = Screen::new(
+            Capturer::new(Display::primary().context("get primary display")?)
+                .context("create capturer")?,
+        );
+        let scrcpy = std::process::Command::new("scrcpy")
+            .arg("--window-x=0")
+            .arg("--window-y=0")
+            .arg("--video-bit-rate=64M")
+            .arg("--no-audio")
+            .arg("--no-clipboard-autosync")
+            .arg("--always-on-top")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("spawn scrcpy")?;
+
+        let device_state = DeviceState::new();
+        while !device_state.get_keys().contains(&Keycode::Backspace) {
+            sleep(Duration::from_millis(10));
+        }
+        while device_state.get_keys().contains(&Keycode::Backspace) {
+            sleep(Duration::from_millis(10));
+        }
+
+        Ok(OnscreenDevice {
+            arrow_positions,
+            claim_button_x,
+            claim_button_y,
+            device_state: DeviceState::new(),
+            screen,
+            enigo: Enigo::new(),
+            scrcpy,
         })
     }
 }
