@@ -37,11 +37,6 @@ impl Arrow {
         self.0 = (self.0 + 1) % 6;
     }
 
-    fn rotate(mut self) -> Arrow {
-        self.rotate_mut();
-        self
-    }
-
     fn distance_to(self, other: Arrow) -> usize {
         let a: isize = self.0.into();
         let b: isize = other.0.into();
@@ -198,12 +193,6 @@ impl Board {
         self.at_mut(x + 1, y + 1).rotate_mut();
     }
 
-    fn poke(&self, x: u8, y: u8) -> Board {
-        let mut b = self.clone();
-        b.poke_mut(x, y);
-        b
-    }
-
     pub fn solve(mut self) -> Vec<(u8, u8)> {
         fn partially_solve(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
             const PARTIAL_SOLVE_MOVES: [((u8, u8), (u8, u8)); 30] = [
@@ -301,6 +290,7 @@ impl Board {
 }
 
 #[rustfmt::skip]
+#[allow(unused_macros)]
 macro_rules! board {
     (
                  $a1:tt
@@ -404,7 +394,7 @@ mod board_tests {
 
     #[test]
     fn poke_center() {
-        let got = board!(
+        let mut got = board!(
                      4
                   4     4
                4     4     4
@@ -419,8 +409,8 @@ mod board_tests {
                   4     4
                      4
         )
-        .unwrap()
-        .poke(4, 4);
+        .unwrap();
+        got.poke_mut(4, 4);
         let want = board!(
                      4
                   4     4
@@ -442,7 +432,7 @@ mod board_tests {
 
     #[test]
     fn poke_edges() {
-        let got = board!(
+        let mut got = board!(
                      0
                   0     0
                0     0     0
@@ -457,13 +447,13 @@ mod board_tests {
                   0     0
                      0
         )
-        .unwrap()
-        .poke(1, 1)
-        .poke(2, 5)
-        .poke(3, 6)
-        .poke(5, 2)
-        .poke(7, 4)
-        .poke(7, 6);
+        .unwrap();
+        got.poke_mut(1, 1);
+        got.poke_mut(2, 5);
+        got.poke_mut(3, 6);
+        got.poke_mut(5, 2);
+        got.poke_mut(7, 4);
+        got.poke_mut(7, 6);
         let want = board!(
                      1
                   1     1
@@ -485,7 +475,7 @@ mod board_tests {
 
     #[test]
     fn poke_wraparound() {
-        let got = board!(
+        let mut got = board!(
                      5
                   5     5
                5     5     5
@@ -500,9 +490,9 @@ mod board_tests {
                   5     5
                      5
         )
-        .unwrap()
-        .poke(3, 3)
-        .poke(3, 4);
+        .unwrap();
+        got.poke_mut(3, 3);
+        got.poke_mut(3, 4);
         let want = board!(
                      5
                   5     5
