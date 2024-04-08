@@ -4,17 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.70"
-clap = { version = "4.3.16", features = ["derive"] }
-device_query = "1.1.2"
-enigo = "0.1.2"
-flate2 = "1.0.28"
-itertools = "0.10.5"
-phf = { version = "0.11.2", features = ["macros"] }
-proptest = "1.2.0"
-rand = "0.8.5"
-rayon = "1.7.0"
-scrap = "0.5.0"
-serde = { version = "1.0.159", features = ["derive"] }
-serde_json = "1.0.95"
-thiserror = "1.0.40"
+anyhow = "*"
+clap = { version = "*", features = ["derive"] }
+device_query = "*"
+enigo = "*"
+flate2 = "*"
+itertools = "*"
+phf = { version = "*", features = ["macros"] }
+proptest = "*"
+rand = "*"
+rayon = "*"
+scrap = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+thiserror = "*"
