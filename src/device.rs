@@ -346,10 +346,9 @@ impl Device for OnscreenDevice {
             sleep(Duration::from_micros(1000));
             for _ in 0..n {
                 self.enigo.mouse_down(MouseButton::Left);
-                // sleep(Duration::from_micros(1000));
                 self.enigo.mouse_up(MouseButton::Left);
-                sleep(Duration::from_micros(1000));
             }
+            sleep(Duration::from_micros(1500));
         }
         Ok(())
     }
