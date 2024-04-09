@@ -151,15 +151,15 @@ impl Device for HeadlessDevice {
             .arg("screencap | gzip -c -k -1 /dev/stdin")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
-            .unwrap()
+            .context("spawn screencap and gzip")?
             .wait_with_output()
-            .unwrap();
+            .context("wait for screencap and gzip")?;
         self.screencap_output.clear();
         GzDecoder::new(output.stdout.as_slice())
             .read_to_end(&mut self.screencap_output)
-            .unwrap();
+            .context("decode gzipped screencap output")?;
 
         let rgbas = self
             .screencap_output
