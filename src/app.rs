@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, bail, Context};
 
@@ -127,7 +130,10 @@ where
             })
             .context("player transition")?;
         match action {
-            Action::Wait => {}
+            Action::Wait => {
+                // FIXME:
+                sleep(Duration::from_millis(1));
+            }
             Action::Solve => {
                 // FIXME:
                 let mut taps = Hex::from_fn(|_, _| 0u8);
@@ -137,7 +143,7 @@ where
                     *taps.at_mut(x, y).unwrap() += 1;
                 }
                 for (_, _, n) in taps.enumerate_mut() {
-                    *n %= 6;
+                    *n %= 2;
                 }
                 device.tap_board(taps).context("tap board")?;
             }
