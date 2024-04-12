@@ -3,50 +3,40 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 
 use crate::{expert::Board, hex::Hex};
 
 pub trait Device {
-    fn detect_board(&mut self) -> anyhow::Result<Board>;
+    fn detect_board(&mut self) -> anyhow::Result<Option<Board>>;
     fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()>;
     fn tap_claim_button(&mut self) -> anyhow::Result<()>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OnscreenBoard {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BoardState {
     Solved,
-    Unsolved,
-}
-
-impl OnscreenBoard {
-    fn new(board: &Board) -> Self {
-        if board.is_solved() {
-            Self::Solved
-        } else {
-            Self::Unsolved
-        }
-    }
+    Unsolved(Board),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlayerState {
-    Start,
-    WaitForSolvedOnscreenBoard,
-    WaitForUnsolvedOnscreenBoard,
+    WaitForBoard,
+    WaitForSolvedBoard,
+    WaitForUnsolvedBoard,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Action {
     Wait,
-    Solve,
+    Solve(Board),
     ClaimRewards,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct PlayerTransitionContext {
     now: Instant,
-    onscreen_board: OnscreenBoard,
+    board: Option<Board>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,60 +48,80 @@ struct Player {
 impl Player {
     fn new(last_transition: Instant) -> Player {
         Player {
-            state: PlayerState::Start,
+            state: PlayerState::WaitForBoard,
             last_transition,
         }
     }
 
-    fn set_current_state(&mut self, ctx: PlayerTransitionContext, new: PlayerState) {
-        self.state = new;
-        self.last_transition = ctx.now;
+    fn set_current_state(&mut self, now: Instant, new_state: PlayerState) {
+        self.state = new_state;
+        self.last_transition = now;
     }
 
     fn transition(&mut self, ctx: PlayerTransitionContext) -> anyhow::Result<Action> {
-        let elapsed = match ctx.now.checked_duration_since(self.last_transition) {
-            Some(x) => x,
-            None => bail!("`ctx.now` is earlier than `self.last_transition`"),
-        };
+        let PlayerTransitionContext { now, board } = ctx;
+        let elapsed = now
+            .checked_duration_since(self.last_transition)
+            .context("`ctx.now` is earlier than `self.last_transition`")?;
+        let maybe_board_state = board.map(|b| {
+            if b.is_solved() {
+                BoardState::Solved
+            } else {
+                BoardState::Unsolved(b)
+            }
+        });
 
-        match (self.state, ctx.onscreen_board) {
-            (
-                PlayerState::Start | PlayerState::WaitForSolvedOnscreenBoard,
-                OnscreenBoard::Solved,
-            ) => {
-                self.set_current_state(ctx, PlayerState::WaitForUnsolvedOnscreenBoard);
-                Ok(Action::ClaimRewards)
+        let action = match (self.state, maybe_board_state) {
+            (PlayerState::WaitForBoard, None) => {
+                if elapsed > Duration::from_secs(10) {
+                    bail!("waited for a board for {:?}", elapsed);
+                }
+                Action::Wait
+            }
+            (PlayerState::WaitForBoard, Some(BoardState::Unsolved(b))) => {
+                self.set_current_state(now, PlayerState::WaitForSolvedBoard);
+                Action::Solve(b)
+            }
+            (PlayerState::WaitForBoard, Some(BoardState::Solved)) => {
+                self.set_current_state(now, PlayerState::WaitForUnsolvedBoard);
+                Action::ClaimRewards
             }
 
-            (
-                PlayerState::Start | PlayerState::WaitForUnsolvedOnscreenBoard,
-                OnscreenBoard::Unsolved,
-            ) => {
-                self.set_current_state(ctx, PlayerState::WaitForSolvedOnscreenBoard);
-                Ok(Action::Solve)
+            (PlayerState::WaitForSolvedBoard | PlayerState::WaitForUnsolvedBoard, None) => {
+                self.set_current_state(now, PlayerState::WaitForBoard);
+                Action::Wait
+            }
+            (PlayerState::WaitForSolvedBoard, Some(BoardState::Solved)) => {
+                self.set_current_state(now, PlayerState::WaitForUnsolvedBoard);
+                Action::ClaimRewards
+            }
+            (PlayerState::WaitForUnsolvedBoard, Some(BoardState::Unsolved(b))) => {
+                self.set_current_state(now, PlayerState::WaitForSolvedBoard);
+                Action::Solve(b)
             }
 
             // After solving the board until the screen updates. If the board
             // doesn't align, it's probably because some clicks didn't register.
             // Try solving the board again.
-            (PlayerState::WaitForSolvedOnscreenBoard, OnscreenBoard::Unsolved) => {
-                if elapsed > Duration::from_secs(2) {
-                    self.set_current_state(ctx, PlayerState::WaitForSolvedOnscreenBoard);
-                    Ok(Action::Solve)
+            (PlayerState::WaitForSolvedBoard, Some(BoardState::Unsolved(b))) => {
+                if elapsed > Duration::from_secs(1) {
+                    self.set_current_state(now, PlayerState::WaitForSolvedBoard);
+                    Action::Solve(b)
                 } else {
-                    Ok(Action::Wait)
+                    Action::Wait
                 }
             }
 
             // After hitting the claim button until the screen updates
-            (PlayerState::WaitForUnsolvedOnscreenBoard, OnscreenBoard::Solved) => {
-                if elapsed > Duration::from_secs(2) {
-                    Err(anyhow!("waited for unsolved board for {:?}", elapsed))
+            (PlayerState::WaitForUnsolvedBoard, Some(BoardState::Solved)) => {
+                if elapsed > Duration::from_secs(1) {
+                    bail!("waited for unsolved board for {:?}", elapsed);
                 } else {
-                    Ok(Action::Wait)
+                    Action::Wait
                 }
             }
-        }
+        };
+        Ok(action)
     }
 }
 
@@ -126,7 +136,7 @@ where
         let action = player
             .transition(PlayerTransitionContext {
                 now: Instant::now(),
-                onscreen_board: OnscreenBoard::new(&board),
+                board,
             })
             .context("player transition")?;
         match action {
@@ -134,10 +144,10 @@ where
                 // FIXME:
                 sleep(Duration::from_millis(1));
             }
-            Action::Solve => {
+            Action::Solve(b) => {
                 // FIXME:
                 let mut taps = Hex::from_fn(|_, _| 0u8);
-                for (x, y) in board.solve() {
+                for (x, y) in b.solve() {
                     let x = x as usize - 1;
                     let y = y as usize - 1;
                     *taps.at_mut(x, y).unwrap() += 1;

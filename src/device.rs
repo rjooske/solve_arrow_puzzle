@@ -144,7 +144,7 @@ impl Drop for ScrcpyDevice {
 }
 
 impl Device for ScrcpyDevice {
-    fn detect_board(&mut self) -> anyhow::Result<Board> {
+    fn detect_board(&mut self) -> anyhow::Result<Option<Board>> {
         static LUMA_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
             39u8 => Arrow(0),
             31u8 => Arrow(0),
@@ -159,7 +159,7 @@ impl Device for ScrcpyDevice {
             .lumas
             .lock()
             .map_err(|err| anyhow!("failed to take the lock for lumas: {}", err))?;
-        let arrows: Vec<_> = self
+        let arrows = self
             .luma_sample_positions
             .enumerate()
             .map(|(_, _, ps)| {
@@ -169,13 +169,10 @@ impl Device for ScrcpyDevice {
                     .sum::<f64>()
                     / Self::SAMPLE_COUNT_PER_ARROW as f64;
                 let luma = luma.round() as u8;
-                LUMA_TO_ARROW
-                    .get(&luma)
-                    .copied()
-                    .with_context(|| format!("no arrows correspond to luma value {}", luma))
+                LUMA_TO_ARROW.get(&luma).copied()
             })
-            .try_collect()?;
-        Ok(Board::from_arrows(arrows))
+            .collect::<Option<Vec<_>>>();
+        Ok(arrows.map(Board::from_arrows))
     }
 
     fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()> {
