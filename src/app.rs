@@ -143,7 +143,7 @@ where
                     *taps.at_mut(x, y).unwrap() += 1;
                 }
                 for (_, _, n) in taps.enumerate_mut() {
-                    *n %= 2;
+                    *n %= 6;
                 }
                 device.tap_board(taps).context("tap board")?;
             }

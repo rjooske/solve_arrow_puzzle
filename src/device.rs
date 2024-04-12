@@ -1,22 +1,18 @@
 use std::{
-    fmt::{Debug, Write as _},
-    io::{self, Read, Write},
+    fmt::Debug,
+    io::{Read, Write},
     iter::{once, repeat},
     net::{SocketAddr, TcpListener, TcpStream},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
-    thread::{self, sleep},
+    thread::{self},
     time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context};
-use device_query::{DeviceQuery, DeviceState, Keycode};
-use enigo::{Enigo, MouseButton, MouseControllable};
-use flate2::read::GzDecoder;
 use itertools::Itertools;
 use phf::phf_map;
 use rand::random;
-use scrap::{Capturer, Display};
 
 use crate::{
     app::Device,
@@ -73,10 +69,6 @@ impl Vec2 {
         (self.x.powi(2) + self.y.powi(2)).sqrt()
     }
 
-    fn round_as_i32(self) -> (i32, i32) {
-        (self.x.round() as i32, self.y.round() as i32)
-    }
-
     fn round_as_u32(self) -> (u32, u32) {
         (self.x.round() as u32, self.y.round() as u32)
     }
@@ -126,296 +118,7 @@ impl Transform {
 }
 
 #[derive(Debug)]
-pub struct HeadlessDevice {
-    width: usize,
-    claim_button: Vec2,
-    arrow_positions: Hex<(usize, usize)>,
-    screencap_output: Vec<u8>,
-    adb_shell_input: Child,
-    adb_shell_input_stdin: ChildStdin,
-}
-
-static RED_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
-    27u8 => Arrow(0),
-    17u8 => Arrow(0),
-    30u8 => Arrow(1),
-    44u8 => Arrow(2),
-    57u8 => Arrow(3),
-    71u8 => Arrow(4),
-    85u8 => Arrow(5),
-};
-
-impl Drop for HeadlessDevice {
-    fn drop(&mut self) {
-        let _ = self.adb_shell_input.kill();
-        let _ = self.adb_shell_input.wait();
-    }
-}
-
-impl Device for HeadlessDevice {
-    fn detect_board(&mut self) -> anyhow::Result<Board> {
-        let output = Command::new("adb")
-            .arg("shell")
-            .arg("screencap | gzip -c -k -1 /dev/stdin")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("spawn screencap and gzip")?
-            .wait_with_output()
-            .context("wait for screencap and gzip")?;
-        self.screencap_output.clear();
-        GzDecoder::new(output.stdout.as_slice())
-            .read_to_end(&mut self.screencap_output)
-            .context("decode gzipped screencap output")?;
-
-        let rgbas = self
-            .screencap_output
-            .get(16..)
-            .context("screencap output too small")?;
-        let arrows: Vec<_> = self
-            .arrow_positions
-            .enumerate()
-            .map(|(_, _, &(x, y))| {
-                let r = rgbas[4 * (x + self.width * y)];
-                RED_TO_ARROW
-                    .get(&r)
-                    .copied()
-                    .with_context(|| format!("no arrows correspond to red value {}", r))
-            })
-            .try_collect()?;
-        Ok(Board::from_arrows(arrows))
-    }
-
-    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()> {
-        let mut commands = String::new();
-        for ((_, _, &n), (_, _, &(x, y))) in taps.enumerate().zip(self.arrow_positions.enumerate())
-        {
-            for _ in 0..n {
-                writeln!(commands, "input tap {} {} &", x, y).unwrap();
-            }
-        }
-        self.adb_shell_input_stdin
-            .write_all(commands.as_bytes())
-            .context("write to adb shell stdin for input")?;
-        Ok(())
-    }
-
-    fn tap_claim_button(&mut self) -> anyhow::Result<()> {
-        writeln!(
-            self.adb_shell_input_stdin,
-            "input tap {} {}",
-            self.claim_button.x, self.claim_button.y
-        )
-        .context("write to adb shell stdin for input")?;
-        Ok(())
-    }
-}
-
-impl HeadlessDevice {
-    pub fn new(
-        width: usize,
-        transform: Transform,
-        claim_button: Vec2,
-    ) -> anyhow::Result<HeadlessDevice> {
-        let arrow_positions =
-            Hex::from_fn(|x, y| transform.index_to_position(x, y).round_as_usize());
-
-        let mut adb_shell_input = Command::new("adb")
-            .arg("shell")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("spawn adb shell for input")?;
-
-        Ok(HeadlessDevice {
-            width,
-            claim_button,
-            arrow_positions,
-            screencap_output: Vec::new(),
-            adb_shell_input_stdin: adb_shell_input
-                .stdin
-                .take()
-                .context("take adb shell stdin for input")?,
-            adb_shell_input,
-        })
-    }
-}
-
-struct ScreenView<'a> {
-    bgras: &'a [u8],
-    width: usize,
-}
-
-struct Screen(Capturer);
-
-impl Debug for Screen {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Screen").field(&"-").finish()
-    }
-}
-
-impl Screen {
-    fn new(capturer: Capturer) -> Screen {
-        Screen(capturer)
-    }
-
-    fn view_and_map<F, T>(&mut self, f: F) -> io::Result<T>
-    where
-        F: FnOnce(ScreenView) -> T,
-    {
-        let Screen(capturer) = self;
-        let width = capturer.width();
-
-        loop {
-            match capturer.frame() {
-                Ok(frame) => {
-                    return Ok(f(ScreenView {
-                        bgras: &frame,
-                        width,
-                    }));
-                }
-                Err(err) => {
-                    if err.kind() == io::ErrorKind::WouldBlock {
-                        sleep(Duration::from_millis(1));
-                    } else {
-                        return Err(err);
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct OnscreenDevice {
-    arrow_positions: Hex<(i32, i32)>,
-    claim_button_x: i32,
-    claim_button_y: i32,
-    device_state: DeviceState,
-    screen: Screen,
-    enigo: Enigo,
-    scrcpy: Child,
-}
-
-impl Drop for OnscreenDevice {
-    fn drop(&mut self) {
-        let _ = self.scrcpy.kill();
-        let _ = self.scrcpy.wait();
-    }
-}
-
-impl Device for OnscreenDevice {
-    fn detect_board(&mut self) -> anyhow::Result<Board> {
-        if self.device_state.get_keys().contains(&Keycode::Backspace) {
-            bail!("interrupted");
-        }
-        if let Some(status) = self.scrcpy.try_wait().context("try waiting for scrcpy")? {
-            bail!("scrcpy exited: {}", status);
-        }
-
-        self.screen
-            .view_and_map(|view| {
-                let arrows: Vec<_> = self
-                    .arrow_positions
-                    .enumerate()
-                    .map(|(_, _, &(x, y))| {
-                        let x = x as usize;
-                        let y = y as usize;
-                        let r = view.bgras[4 * (x + view.width * y) + 2];
-                        RED_TO_ARROW
-                            .get(&r)
-                            .copied()
-                            .with_context(|| format!("no arrows correspond to red value {}", r))
-                    })
-                    .try_collect()?;
-                anyhow::Ok(Board::from_arrows(arrows))
-            })
-            .context("view screen")?
-            .context("map screen view")
-    }
-
-    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()> {
-        let taps = taps
-            .enumerate()
-            .zip(self.arrow_positions.enumerate())
-            .filter_map(
-                |((_, _, &n), (_, _, &(x, y)))| {
-                    if n == 0 {
-                        None
-                    } else {
-                        Some((x, y, n))
-                    }
-                },
-            );
-        for (x, y, n) in taps {
-            self.enigo.mouse_move_to(x + 20, y);
-            sleep(Duration::from_micros(1000));
-            for _ in 0..n {
-                self.enigo.mouse_down(MouseButton::Left);
-                self.enigo.mouse_up(MouseButton::Left);
-            }
-            sleep(Duration::from_micros(1500));
-        }
-        Ok(())
-    }
-
-    fn tap_claim_button(&mut self) -> anyhow::Result<()> {
-        self.enigo
-            .mouse_move_to(self.claim_button_x, self.claim_button_y);
-        sleep(Duration::from_micros(1000));
-        self.enigo.mouse_down(MouseButton::Left);
-        sleep(Duration::from_micros(1000));
-        self.enigo.mouse_up(MouseButton::Left);
-        sleep(Duration::from_micros(1000));
-        Ok(())
-    }
-}
-
-impl OnscreenDevice {
-    pub fn new(transform: Transform, claim_button: Vec2) -> anyhow::Result<OnscreenDevice> {
-        let arrow_positions = Hex::from_fn(|x, y| transform.index_to_position(x, y).round_as_i32());
-        let (claim_button_x, claim_button_y) = claim_button.round_as_i32();
-        let screen = Screen::new(
-            Capturer::new(Display::primary().context("get primary display")?)
-                .context("create capturer")?,
-        );
-        let scrcpy = std::process::Command::new("scrcpy")
-            .arg("--window-x=0")
-            .arg("--window-y=0")
-            .arg("--video-bit-rate=64M")
-            .arg("--no-audio")
-            .arg("--no-clipboard-autosync")
-            .arg("--always-on-top")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("spawn scrcpy")?;
-
-        let device_state = DeviceState::new();
-        while !device_state.get_keys().contains(&Keycode::Backspace) {
-            sleep(Duration::from_millis(10));
-        }
-        while device_state.get_keys().contains(&Keycode::Backspace) {
-            sleep(Duration::from_millis(10));
-        }
-
-        Ok(OnscreenDevice {
-            arrow_positions,
-            claim_button_x,
-            claim_button_y,
-            device_state: DeviceState::new(),
-            screen,
-            enigo: Enigo::new(),
-            scrcpy,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct ScrcpyServerDevice {
+pub struct ScrcpyDevice {
     screen_width: usize,
     screen_height: usize,
     claim_button_x: u32,
@@ -429,7 +132,7 @@ pub struct ScrcpyServerDevice {
     lumas: Arc<Mutex<Vec<u8>>>,
 }
 
-impl Drop for ScrcpyServerDevice {
+impl Drop for ScrcpyDevice {
     fn drop(&mut self) {
         let _ = self.video_server.kill();
         let _ = self.video_server.wait();
@@ -440,7 +143,7 @@ impl Drop for ScrcpyServerDevice {
     }
 }
 
-impl Device for ScrcpyServerDevice {
+impl Device for ScrcpyDevice {
     fn detect_board(&mut self) -> anyhow::Result<Board> {
         static LUMA_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
             39u8 => Arrow(0),
@@ -496,7 +199,7 @@ impl Device for ScrcpyServerDevice {
     }
 }
 
-impl ScrcpyServerDevice {
+impl ScrcpyDevice {
     const SAMPLE_COUNT_PER_ARROW: usize = 8;
 
     pub fn new(
@@ -507,7 +210,7 @@ impl ScrcpyServerDevice {
         scrcpy_server_path: &str,
         scrcpy_video_port: u16,
         scrcpy_control_port: u16,
-    ) -> anyhow::Result<ScrcpyServerDevice> {
+    ) -> anyhow::Result<ScrcpyDevice> {
         use std::f64::consts::PI;
 
         let (claim_button_x, claim_button_y) = claim_button.round_as_u32();
@@ -686,7 +389,7 @@ impl ScrcpyServerDevice {
             });
         }
 
-        let mut device = ScrcpyServerDevice {
+        let mut device = ScrcpyDevice {
             screen_width,
             screen_height,
             claim_button_x,
