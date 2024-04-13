@@ -4,12 +4,13 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use itertools::Itertools;
 
 use crate::{expert::Board, hex::Hex};
 
 pub trait Device {
     fn detect_board(&mut self) -> anyhow::Result<Option<Board>>;
-    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()>;
+    fn tap_board(&mut self, taps: Hex<usize>) -> anyhow::Result<()>;
     fn tap_claim_button(&mut self) -> anyhow::Result<()>;
 }
 
@@ -145,17 +146,7 @@ where
                 sleep(Duration::from_millis(1));
             }
             Action::Solve(b) => {
-                // FIXME:
-                let mut taps = Hex::from_fn(|_, _| 0u8);
-                for (x, y) in b.solve() {
-                    let x = x as usize - 1;
-                    let y = y as usize - 1;
-                    *taps.at_mut(x, y).unwrap() += 1;
-                }
-                for (_, _, n) in taps.enumerate_mut() {
-                    *n %= 6;
-                }
-                device.tap_board(taps).context("tap board")?;
+                device.tap_board(b.solve()).context("tap board")?;
             }
             Action::ClaimRewards => {
                 device.tap_claim_button().context("tap claim button")?;

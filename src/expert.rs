@@ -1,7 +1,8 @@
-use std::{cmp::Ordering, fmt::Display, iter::repeat, ops::RangeInclusive};
+use std::fmt::Display;
 
-use itertools::Itertools;
 use thiserror::Error;
+
+use crate::hex::{positions::Position, Hex};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ArrowFromU8Error {
@@ -33,7 +34,7 @@ impl Display for Arrow {
 impl Arrow {
     const UP: Arrow = Arrow(0);
 
-    fn rotate_mut(&mut self) {
+    fn rotate(&mut self) {
         self.0 = (self.0 + 1) % 6;
     }
 
@@ -44,614 +45,180 @@ impl Arrow {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
-pub struct Board([Arrow; 81]);
-
-impl PartialEq for Board {
-    /// Only compares the arrows inside the hexagon.
-    fn eq(&self, other: &Self) -> bool {
-        self.arrows().zip(other.arrows()).all(|(a, b)| a == b)
-    }
-}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Board(Hex<Arrow>);
 
 impl Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let rows = (1..=13)
-            .map(|v| {
-                let arrows = (0..(v.min(7)))
-                    .filter_map(|h| {
-                        let x = 1 + h;
-                        let y = v - h;
-                        Board::Y_TO_X_RANGE.get(y).and_then(|r| {
-                            if r.contains(&x) {
-                                Some(self.0[x + 9 * y])
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                let padding = " ".repeat(3 * (4 - arrows.len()));
-                let row = arrows.into_iter().map(|a| a.to_string()).join("     ");
-                padding + &row
-            })
-            .join("\n");
-        write!(f, "{}", rows)
+        let s = self.0.visualize(|a| {
+            match a {
+                Arrow(0) => "0 ",
+                Arrow(1) => "1 ",
+                Arrow(2) => "2 ",
+                Arrow(3) => "3 ",
+                Arrow(4) => "4 ",
+                Arrow(5) => "5 ",
+                _ => "? ",
+            }
+            .into()
+        });
+        write!(f, "{}", s)
     }
 }
 
 impl Board {
-    const Y_TO_X_RANGE: [RangeInclusive<usize>; 9] = [
-        9..=9,
-        1..=4,
-        1..=5,
-        1..=6,
-        1..=7,
-        2..=7,
-        3..=7,
-        4..=7,
-        9..=9,
-    ];
-
-    pub const POSITIONS: [(u8, u8); 37] = [
-        // 1st row
-        (1, 1),
-        (2, 1),
-        (3, 1),
-        (4, 1),
-        // 2nd row
-        (1, 2),
-        (2, 2),
-        (3, 2),
-        (4, 2),
-        (5, 2),
-        // 3rd row
-        (1, 3),
-        (2, 3),
-        (3, 3),
-        (4, 3),
-        (5, 3),
-        (6, 3),
-        // 4th row
-        (1, 4),
-        (2, 4),
-        (3, 4),
-        (4, 4),
-        (5, 4),
-        (6, 4),
-        (7, 4),
-        // 5th row
-        (2, 5),
-        (3, 5),
-        (4, 5),
-        (5, 5),
-        (6, 5),
-        (7, 5),
-        // 6th row
-        (3, 6),
-        (4, 6),
-        (5, 6),
-        (6, 6),
-        (7, 6),
-        // 7th row
-        (4, 7),
-        (5, 7),
-        (6, 7),
-        (7, 7),
-    ];
-
-    fn new() -> Board {
-        Board([Arrow::UP; 81])
-    }
-
-    pub fn from_arrows<I>(arrows: I) -> Board
-    where
-        I: IntoIterator<Item = Arrow>,
-    {
-        let mut b = Board::new();
-        for (&(x, y), arrow) in Board::POSITIONS.iter().zip(arrows) {
-            *b.at_mut(x, y) = arrow;
-        }
-        b
-    }
-
-    /// Iterates over the arrows inside the hexagon along with its x and y
-    /// coordinate.
-    fn arrows(&self) -> impl Iterator<Item = (usize, usize, Arrow)> + '_ {
-        Board::POSITIONS.iter().map(|&(x, y)| {
-            let x: usize = x.into();
-            let y: usize = y.into();
-            (x, y, self.0[x + 9 * y])
-        })
+    pub fn new(arrows: Hex<Arrow>) -> Board {
+        Board(arrows)
     }
 
     pub fn is_solved(&self) -> bool {
-        self.arrows().all(|(_, _, a)| a == Arrow::UP)
+        self.0.enumerate().all(|(&a, _)| a == Arrow::UP)
     }
 
-    fn at_mut(&mut self, x: u8, y: u8) -> &mut Arrow {
-        let i: usize = (x + 9 * y).into();
-        &mut self.0[i]
-    }
+    fn poke(&mut self, p: Position) {
+        const DS: [(i64, i64); 7] = [(-1, -1), (0, -1), (-1, 0), (0, 0), (1, 0), (0, 1), (1, 1)];
 
-    fn at(&self, x: u8, y: u8) -> Arrow {
-        let i: usize = (x + 9 * y).into();
-        self.0[i]
-    }
-
-    fn poke_mut(&mut self, x: u8, y: u8) {
-        if !(1..=7).contains(&x) || !(1..=7).contains(&y) {
-            panic!("tried to poke outside the board: ({x}, {y})");
+        let (x, y) = p.as_xy();
+        let x: i64 = x.try_into().unwrap();
+        let y: i64 = y.try_into().unwrap();
+        let xys = DS.into_iter().flat_map(|(dx, dy)| {
+            let x: usize = (x + dx).try_into().ok()?;
+            let y: usize = (y + dy).try_into().ok()?;
+            Some((x, y))
+        });
+        for (x, y) in xys {
+            if let Some(a) = self.0.at_mut(x, y) {
+                a.rotate();
+            }
         }
-
-        self.at_mut(x - 1, y - 1).rotate_mut();
-        self.at_mut(x, y - 1).rotate_mut();
-        self.at_mut(x - 1, y).rotate_mut();
-        self.at_mut(x, y).rotate_mut();
-        self.at_mut(x + 1, y).rotate_mut();
-        self.at_mut(x, y + 1).rotate_mut();
-        self.at_mut(x + 1, y + 1).rotate_mut();
     }
 
-    pub fn solve(mut self) -> Vec<(u8, u8)> {
-        fn partially_solve(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
-            const PARTIAL_SOLVE_MOVES: [((u8, u8), (u8, u8)); 30] = [
-                // 1st "row"
-                ((1, 1), (2, 2)),
-                ((2, 1), (3, 2)),
-                ((3, 1), (4, 2)),
-                ((4, 1), (5, 2)),
-                ((1, 2), (2, 3)),
-                ((1, 3), (2, 4)),
-                ((1, 4), (2, 5)),
-                // 2nd "row"
-                ((2, 2), (3, 3)),
-                ((3, 2), (4, 3)),
-                ((4, 2), (5, 3)),
-                ((5, 2), (6, 3)),
-                ((2, 3), (3, 4)),
-                ((2, 4), (3, 5)),
-                ((2, 5), (3, 6)),
-                // 3rd "row"
-                ((3, 3), (4, 4)),
-                ((4, 3), (5, 4)),
-                ((5, 3), (6, 4)),
-                ((6, 3), (7, 4)),
-                ((3, 4), (4, 5)),
-                ((3, 5), (4, 6)),
-                ((3, 6), (4, 7)),
-                // 4th "row"
-                ((4, 4), (5, 5)),
-                ((5, 4), (6, 5)),
-                ((6, 4), (7, 5)),
-                ((4, 5), (5, 6)),
-                ((4, 6), (5, 7)),
-                // 5th "row"
-                ((5, 5), (6, 6)),
-                ((6, 5), (7, 6)),
-                ((5, 6), (6, 7)),
-                // 6th "row"
-                ((6, 6), (7, 7)),
+    fn solve_this_orientation(mut self) -> Hex<usize> {
+        fn partially_solve(b: &mut Board, poke_counts: &mut Hex<usize>) {
+            use crate::hex::positions::*;
+
+            /// Groups
+            /// |          G0
+            /// |       G0    G0
+            /// |    G0    G1    G0
+            /// | G0    G1    G1    G0
+            /// |    G1    G2    G1
+            /// | G1    G2    G2    G1
+            /// |    G2    G3    G2
+            /// | G2    G3    G3    G2
+            /// |    G3    G4    G3
+            /// | G3    G4    G4    G3
+            /// |    G4    G5    G4
+            /// |       G5    G5
+            /// |          G6
+            const PARTIAL_SOLVE_MOVES: [(Position, Position); 30] = [
+                // Align group 0 by poking group 1
+                (A0, B1),
+                (A1, B2),
+                (A2, B3),
+                (A3, B4),
+                (B0, C1),
+                (C0, D1),
+                (D0, E1),
+                // Align group 1 by poking group 2
+                (B1, C2),
+                (B2, C3),
+                (B3, C4),
+                (B4, C5),
+                (C1, D2),
+                (D1, E2),
+                (E1, F2),
+                // Align group 2 by poking group 3
+                (C2, D3),
+                (C3, D4),
+                (C4, D5),
+                (C5, D6),
+                (D2, E3),
+                (E2, F3),
+                (F2, G3),
+                // Align group 3 by poking group 4
+                (D3, E4),
+                (D4, E5),
+                (D5, E6),
+                (E3, F4),
+                (F3, G4),
+                // Align group 4 by poking group 5
+                (E4, F5),
+                (E5, F6),
+                (F4, G5),
+                // Align group 5 by poking group 6
+                (F5, G6),
             ];
 
-            for ((target_x, target_y), poke) in PARTIAL_SOLVE_MOVES {
-                let target = b.at(target_x, target_y);
-                let pokes = repeat(poke).take(target.distance_to(Arrow::UP));
-                all_pokes.extend(pokes.clone());
-                for (x, y) in pokes {
-                    b.poke_mut(x, y);
+            for (solvee, poke) in PARTIAL_SOLVE_MOVES {
+                let solvee = b.0[solvee];
+                let poke_count = solvee.distance_to(Arrow::UP);
+                poke_counts[poke] += poke_count;
+                for _ in 0..poke_count {
+                    b.poke(poke);
                 }
             }
         }
 
-        fn fixup(b: &mut Board, all_pokes: &mut Vec<(u8, u8)>) {
-            let a_poke_count =
-                Arrow::UP.distance_to(b.at(7, 5)) + b.at(7, 4).distance_to(Arrow::UP);
-            let b_d_poke_count = b.at(7, 5).distance_to(Arrow::UP);
-            let c_poke_count = if (b.at(7, 4).0 + b.at(7, 6).0) % 2 == 0 {
-                0
-            } else {
-                3
-            };
+        fn fixup(b: &mut Board, poke_counts: &mut Hex<usize>) {
+            use crate::hex::positions::*;
+
+            let d6 = b.0[D6];
+            let e6 = b.0[E6];
+            let f6 = b.0[F6];
+
+            let a_poke_count = Arrow::UP.distance_to(e6) + d6.distance_to(Arrow::UP);
+            let b_d_poke_count = e6.distance_to(Arrow::UP);
+            let c_poke_count = if (d6.0 + f6.0) % 2 == 0 { 0 } else { 3 };
 
             let fixup_pokes = [
-                ((1, 1), a_poke_count),
-                ((2, 1), b_d_poke_count),
-                ((3, 1), c_poke_count),
-                ((4, 1), b_d_poke_count),
+                (A0, a_poke_count),
+                (A1, b_d_poke_count),
+                (A2, c_poke_count),
+                (A3, b_d_poke_count),
             ];
-            for (poke, n) in fixup_pokes {
-                let pokes = repeat(poke).take(n);
-                all_pokes.extend(pokes.clone());
-                for (x, y) in pokes {
-                    b.poke_mut(x, y);
+            for (poke, poke_count) in fixup_pokes {
+                poke_counts[poke] += poke_count;
+                for _ in 0..poke_count {
+                    b.poke(poke);
                 }
             }
         }
 
-        fn minimize_pokes(mut pokes: Vec<(u8, u8)>) -> Vec<(u8, u8)> {
-            pokes.sort_unstable_by(|(ax, ay), (bx, by)| match ay.cmp(by) {
-                Ordering::Equal => ax.cmp(bx),
-                x => x,
-            });
-            pokes
-                .into_iter()
-                .dedup_with_count()
-                .flat_map(|(count, poke)| repeat(poke).take(count % 6))
-                .collect()
+        let mut poke_counts = Hex::from_fn(|_, _| 0);
+        partially_solve(&mut self, &mut poke_counts);
+        fixup(&mut self, &mut poke_counts);
+        partially_solve(&mut self, &mut poke_counts);
+        for (n, _) in poke_counts.enumerate_mut() {
+            *n %= 6;
         }
-
-        let mut all_pokes = Vec::new();
-        partially_solve(&mut self, &mut all_pokes);
-        fixup(&mut self, &mut all_pokes);
-        partially_solve(&mut self, &mut all_pokes);
-        minimize_pokes(all_pokes)
-    }
-}
-
-#[rustfmt::skip]
-#[allow(unused_macros)]
-macro_rules! board {
-    (
-                 $a1:tt
-              $b1:tt $a2:tt
-           $c1:tt $b2:tt $a3:tt
-        $d1:tt $c2:tt $b3:tt $a4:tt
-           $d2:tt $c3:tt $b4:tt
-        $e1:tt $d3:tt $c4:tt $b5:tt
-           $e2:tt $d4:tt $c5:tt
-        $f1:tt $e3:tt $d5:tt $c6:tt
-           $f2:tt $e4:tt $d6:tt
-        $g1:tt $f3:tt $e5:tt $d7:tt
-           $g2:tt $f4:tt $e6:tt
-              $g3:tt $f5:tt
-                 $g4:tt
-    ) => {
-        (|| -> Result<Board, ArrowFromU8Error> {
-            let xx = Arrow::try_from(0).unwrap();
-            let a1 = Arrow::try_from($a1)?;
-            let a2 = Arrow::try_from($a2)?;
-            let a3 = Arrow::try_from($a3)?;
-            let a4 = Arrow::try_from($a4)?;
-            let b1 = Arrow::try_from($b1)?;
-            let b2 = Arrow::try_from($b2)?;
-            let b3 = Arrow::try_from($b3)?;
-            let b4 = Arrow::try_from($b4)?;
-            let b5 = Arrow::try_from($b5)?;
-            let c1 = Arrow::try_from($c1)?;
-            let c2 = Arrow::try_from($c2)?;
-            let c3 = Arrow::try_from($c3)?;
-            let c4 = Arrow::try_from($c4)?;
-            let c5 = Arrow::try_from($c5)?;
-            let c6 = Arrow::try_from($c6)?;
-            let d1 = Arrow::try_from($d1)?;
-            let d2 = Arrow::try_from($d2)?;
-            let d3 = Arrow::try_from($d3)?;
-            let d4 = Arrow::try_from($d4)?;
-            let d5 = Arrow::try_from($d5)?;
-            let d6 = Arrow::try_from($d6)?;
-            let d7 = Arrow::try_from($d7)?;
-            let e1 = Arrow::try_from($e1)?;
-            let e2 = Arrow::try_from($e2)?;
-            let e3 = Arrow::try_from($e3)?;
-            let e4 = Arrow::try_from($e4)?;
-            let e5 = Arrow::try_from($e5)?;
-            let e6 = Arrow::try_from($e6)?;
-            let f1 = Arrow::try_from($f1)?;
-            let f2 = Arrow::try_from($f2)?;
-            let f3 = Arrow::try_from($f3)?;
-            let f4 = Arrow::try_from($f4)?;
-            let f5 = Arrow::try_from($f5)?;
-            let g1 = Arrow::try_from($g1)?;
-            let g2 = Arrow::try_from($g2)?;
-            let g3 = Arrow::try_from($g3)?;
-            let g4 = Arrow::try_from($g4)?;
-
-            Ok(Board([
-                xx, xx, xx, xx, xx, xx, xx, xx, xx,
-                xx, a1, a2, a3, a4, xx, xx, xx, xx,
-                xx, b1, b2, b3, b4, b5, xx, xx, xx,
-                xx, c1, c2, c3, c4, c5, c6, xx, xx,
-                xx, d1, d2, d3, d4, d5, d6, d7, xx,
-                xx, xx, e1, e2, e3, e4, e5, e6, xx,
-                xx, xx, xx, f1, f2, f3, f4, f5, xx,
-                xx, xx, xx, xx, g1, g2, g3, g4, xx,
-                xx, xx, xx, xx, xx, xx, xx, xx, xx,
-            ]))
-        })()
-    };
-}
-
-#[cfg(test)]
-mod board_tests {
-    use std::iter::repeat_with;
-
-    use super::*;
-    use proptest::prelude::*;
-    use rand::{rngs::StdRng, SeedableRng};
-
-    #[test]
-    fn only_compare_arrows_inside_hexagon() {
-        let a = board!(
-                     1
-                  1     1
-               1     1     1
-            1     1     1     1
-               1     1     1
-            1     1     1     1
-               1     1     1
-            1     1     1     1
-               1     1     1
-            1     1     1     1
-               1     1     1
-                  1     1
-                     1
-        )
-        .unwrap();
-        let b = Board([Arrow::try_from(1).unwrap(); 81]);
-        assert_eq!(a, b);
+        poke_counts
     }
 
-    #[test]
-    fn poke_center() {
-        let mut got = board!(
-                     4
-                  4     4
-               4     4     4
-            4     4     4     4
-               4     4     4
-            4     4     4     4
-               4     4     4
-            4     4     4     4
-               4     4     4
-            4     4     4     4
-               4     4     4
-                  4     4
-                     4
-        )
-        .unwrap();
-        got.poke_mut(4, 4);
-        let want = board!(
-                     4
-                  4     4
-               4     4     4
-            4     4     4     4
-               4     5     4
-            4     5     5     4
-               4     5     4
-            4     5     5     4
-               4     5     4
-            4     4     4     4
-               4     4     4
-                  4     4
-                     4
-        )
-        .unwrap();
-        assert_eq!(got, want);
-    }
-
-    #[test]
-    fn poke_edges() {
-        let mut got = board!(
-                     0
-                  0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-            0     0     0     0
-               0     0     0
-                  0     0
-                     0
-        )
-        .unwrap();
-        got.poke_mut(1, 1);
-        got.poke_mut(2, 5);
-        got.poke_mut(3, 6);
-        got.poke_mut(5, 2);
-        got.poke_mut(7, 4);
-        got.poke_mut(7, 6);
-        let want = board!(
-                     1
-                  1     1
-               0     1     0
-            1     0     0     1
-               1     0     1
-            2     0     0     1
-               2     0     1
-            2     0     0     2
-               1     0     1
-            1     0     1     1
-               0     1     2
-                  0     1
-                     1
-        )
-        .unwrap();
-        assert_eq!(got, want);
-    }
-
-    #[test]
-    fn poke_wraparound() {
-        let mut got = board!(
-                     5
-                  5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-                  5     5
-                     5
-        )
-        .unwrap();
-        got.poke_mut(3, 3);
-        got.poke_mut(3, 4);
-        let want = board!(
-                     5
-                  5     5
-               5     0     5
-            5     1     0     5
-               0     1     5
-            5     1     0     5
-               0     1     5
-            5     0     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-                  5     5
-                     5
-        )
-        .unwrap();
-        assert_eq!(got, want);
-    }
-
-    #[test]
-    fn visualize_as_hexagon() {
-        let got = Board([Arrow::try_from(1).unwrap(); 81]).to_string();
-        let want = r#"
-         1
-      1     1
-   1     1     1
-1     1     1     1
-   1     1     1
-1     1     1     1
-   1     1     1
-1     1     1     1
-   1     1     1
-1     1     1     1
-   1     1     1
-      1     1
-         1
-"#
-        .strip_prefix('\n')
-        .unwrap()
-        .strip_suffix('\n')
-        .unwrap()
-        .to_owned();
-        assert_eq!(got, want);
-    }
-
-    #[test]
-    fn visualize_arrows_in_correct_positions() {
-        let got = board!(
-                     0
-                  0     1
-               0     1     2
-            0     1     2     3
-               1     2     3
-            1     2     3     4
-               2     3     4
-            2     3     4     5
-               3     4     5
-            3     4     5     0
-               4     5     0
-                  5     0
-                     0
-        )
-        .unwrap()
-        .to_string();
-        let want = r#"
-         0
-      0     1
-   0     1     2
-0     1     2     3
-   1     2     3
-1     2     3     4
-   2     3     4
-2     3     4     5
-   3     4     5
-3     4     5     0
-   4     5     0
-      5     0
-         0
-"#
-        .strip_prefix('\n')
-        .unwrap()
-        .strip_suffix('\n')
-        .unwrap()
-        .to_owned();
-        assert_eq!(got, want);
-    }
-
-    prop_compose! {
-        fn arb_board()(seed in any::<u64>()) -> Board {
-            let mut rng = StdRng::seed_from_u64(seed);
-            let pokes = repeat_with(|| rng.next_u64())
-                .map(|n| n % 6)
-                .zip(Board::POSITIONS.iter())
-                .flat_map(|(n, &poke)| {
-                    repeat(poke).take(n.try_into().unwrap())
-                });
-            let mut board = Board::new();
-            for (x, y) in pokes {
-                board.poke_mut(x, y);
+    pub fn solve(self) -> Hex<usize> {
+        let mut boards = Vec::with_capacity(12);
+        let mut board = self;
+        for flipped in [false, true] {
+            for rotation in 0..6 {
+                boards.push((flipped, rotation, board.clone()));
+                board.0.rotate_60_cw();
             }
-            board
+            board.0.flip_horizontally();
         }
-    }
 
-    proptest! {
-        #[test]
-        fn solve(mut board in arb_board()) {
-            let pokes = board.clone().solve();
-            for (x, y) in pokes {
-                board.poke_mut(x, y);
-            }
-            prop_assert!(board.is_solved());
-        }
-    }
-}
-
-#[cfg(test)]
-mod board_macro_tests {
-    use super::*;
-
-    #[test]
-    fn fail_if_any_arrows_are_invalid() {
-        let got = board!(
-                     3
-                  3     3
-               3     3     3
-            3     3     3     3
-               3     3     3
-            3     3     3     3
-               3     3     3
-            3     3     3     3
-               3     3     9 // <- Invalid
-            3     3     3     3
-               3     3     3
-                  3     3
-                     3
-        );
-        assert_eq!(got, Err(ArrowFromU8Error::OutOfRange(9)));
-    }
-
-    #[test]
-    fn uniform_board() {
-        let a = board!(
-                     5
-                  5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-            5     5     5     5
-               5     5     5
-                  5     5
-                     5
-        )
-        .unwrap();
-        let b = Board([Arrow::try_from(5).unwrap(); 81]);
-        assert_eq!(a, b);
+        boards
+            .into_iter()
+            .map(|(flipped, rotation, board)| {
+                let mut poke_counts = board.solve_this_orientation();
+                for _ in 0..(6i64 - rotation).rem_euclid(6) {
+                    poke_counts.rotate_60_cw();
+                }
+                if flipped {
+                    poke_counts.flip_horizontally();
+                }
+                poke_counts
+            })
+            .min_by_key(|p| p.enumerate().map(|(&n, _)| n).sum::<usize>())
+            .unwrap()
     }
 }

@@ -1,109 +1,89 @@
-use std::{array, borrow::Cow, fmt::Write};
+use std::{
+    array,
+    borrow::Cow,
+    fmt::Write,
+    ops::{Index, IndexMut},
+};
 
 use itertools::Itertools;
 
-const fn index(position: (usize, usize)) -> usize {
-    let (x, y) = position;
-    x + 7 * y
-}
+use self::positions::Position;
 
-const fn indices(positions: [(usize, usize); 37]) -> [usize; 37] {
+const fn indices(positions: [Position; 37]) -> [usize; 37] {
     let mut out = [0; 37];
     let mut i = 0;
     while i < 37 {
-        let (x, y) = positions[i];
-        out[i] = x + 7 * y;
+        out[i] = positions[i].as_index();
         i += 1;
     }
     out
 }
 
-const fn position_to_index(positions: [(usize, usize); 37]) -> [[Option<usize>; 7]; 7] {
+const fn position_to_index(positions: [Position; 37]) -> [[Option<usize>; 7]; 7] {
     let mut out = [[None; 7]; 7];
     let mut i = 0;
     while i < 37 {
-        let (x, y) = positions[i];
-        out[y][x] = Some(x + 7 * y);
+        let p = positions[i];
+        let (x, y) = p.as_xy();
+        out[y][x] = Some(p.as_index());
         i += 1;
     }
     out
 }
 
-const A0: (usize, usize) = (0, 0);
-const A1: (usize, usize) = (1, 0);
-const A2: (usize, usize) = (2, 0);
-const A3: (usize, usize) = (3, 0);
-const B0: (usize, usize) = (0, 1);
-const B1: (usize, usize) = (1, 1);
-const B2: (usize, usize) = (2, 1);
-const B3: (usize, usize) = (3, 1);
-const B4: (usize, usize) = (4, 1);
-const C0: (usize, usize) = (0, 2);
-const C1: (usize, usize) = (1, 2);
-const C2: (usize, usize) = (2, 2);
-const C3: (usize, usize) = (3, 2);
-const C4: (usize, usize) = (4, 2);
-const C5: (usize, usize) = (5, 2);
-const D0: (usize, usize) = (0, 3);
-const D1: (usize, usize) = (1, 3);
-const D2: (usize, usize) = (2, 3);
-const D3: (usize, usize) = (3, 3);
-const D4: (usize, usize) = (4, 3);
-const D5: (usize, usize) = (5, 3);
-const D6: (usize, usize) = (6, 3);
-const E1: (usize, usize) = (1, 4);
-const E2: (usize, usize) = (2, 4);
-const E3: (usize, usize) = (3, 4);
-const E4: (usize, usize) = (4, 4);
-const E5: (usize, usize) = (5, 4);
-const E6: (usize, usize) = (6, 4);
-const F2: (usize, usize) = (2, 5);
-const F3: (usize, usize) = (3, 5);
-const F4: (usize, usize) = (4, 5);
-const F5: (usize, usize) = (5, 5);
-const F6: (usize, usize) = (6, 5);
-const G3: (usize, usize) = (3, 6);
-const G4: (usize, usize) = (4, 6);
-const G5: (usize, usize) = (5, 6);
-const G6: (usize, usize) = (6, 6);
+pub mod positions {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Position((usize, usize));
 
-const A0_INDEX: usize = index(A0);
-const A1_INDEX: usize = index(A1);
-const A2_INDEX: usize = index(A2);
-const A3_INDEX: usize = index(A3);
-const B0_INDEX: usize = index(B0);
-const B1_INDEX: usize = index(B1);
-const B2_INDEX: usize = index(B2);
-const B3_INDEX: usize = index(B3);
-const B4_INDEX: usize = index(B4);
-const C0_INDEX: usize = index(C0);
-const C1_INDEX: usize = index(C1);
-const C2_INDEX: usize = index(C2);
-const C3_INDEX: usize = index(C3);
-const C4_INDEX: usize = index(C4);
-const C5_INDEX: usize = index(C5);
-const D0_INDEX: usize = index(D0);
-const D1_INDEX: usize = index(D1);
-const D2_INDEX: usize = index(D2);
-const D3_INDEX: usize = index(D3);
-const D4_INDEX: usize = index(D4);
-const D5_INDEX: usize = index(D5);
-const D6_INDEX: usize = index(D6);
-const E1_INDEX: usize = index(E1);
-const E2_INDEX: usize = index(E2);
-const E3_INDEX: usize = index(E3);
-const E4_INDEX: usize = index(E4);
-const E5_INDEX: usize = index(E5);
-const E6_INDEX: usize = index(E6);
-const F2_INDEX: usize = index(F2);
-const F3_INDEX: usize = index(F3);
-const F4_INDEX: usize = index(F4);
-const F5_INDEX: usize = index(F5);
-const F6_INDEX: usize = index(F6);
-const G3_INDEX: usize = index(G3);
-const G4_INDEX: usize = index(G4);
-const G5_INDEX: usize = index(G5);
-const G6_INDEX: usize = index(G6);
+    impl Position {
+        pub const fn as_xy(self) -> (usize, usize) {
+            self.0
+        }
+
+        pub const fn as_index(self) -> usize {
+            let Position((x, y)) = self;
+            x + 7 * y
+        }
+    }
+
+    pub const A0: Position = Position((0, 0));
+    pub const A1: Position = Position((1, 0));
+    pub const A2: Position = Position((2, 0));
+    pub const A3: Position = Position((3, 0));
+    pub const B0: Position = Position((0, 1));
+    pub const B1: Position = Position((1, 1));
+    pub const B2: Position = Position((2, 1));
+    pub const B3: Position = Position((3, 1));
+    pub const B4: Position = Position((4, 1));
+    pub const C0: Position = Position((0, 2));
+    pub const C1: Position = Position((1, 2));
+    pub const C2: Position = Position((2, 2));
+    pub const C3: Position = Position((3, 2));
+    pub const C4: Position = Position((4, 2));
+    pub const C5: Position = Position((5, 2));
+    pub const D0: Position = Position((0, 3));
+    pub const D1: Position = Position((1, 3));
+    pub const D2: Position = Position((2, 3));
+    pub const D3: Position = Position((3, 3));
+    pub const D4: Position = Position((4, 3));
+    pub const D5: Position = Position((5, 3));
+    pub const D6: Position = Position((6, 3));
+    pub const E1: Position = Position((1, 4));
+    pub const E2: Position = Position((2, 4));
+    pub const E3: Position = Position((3, 4));
+    pub const E4: Position = Position((4, 4));
+    pub const E5: Position = Position((5, 4));
+    pub const E6: Position = Position((6, 4));
+    pub const F2: Position = Position((2, 5));
+    pub const F3: Position = Position((3, 5));
+    pub const F4: Position = Position((4, 5));
+    pub const F5: Position = Position((5, 5));
+    pub const F6: Position = Position((6, 5));
+    pub const G3: Position = Position((3, 6));
+    pub const G4: Position = Position((4, 6));
+    pub const G5: Position = Position((5, 6));
+    pub const G6: Position = Position((6, 6));
+}
 
 #[derive(Debug, Clone, Eq)]
 pub struct Hex<T>([Option<T>; 49]);
@@ -116,7 +96,31 @@ where
     fn eq(&self, other: &Self) -> bool {
         self.enumerate()
             .zip(other.enumerate())
-            .all(|((_, _, a), (_, _, b))| a == b)
+            .all(|((a, _), (b, _))| a == b)
+    }
+}
+
+impl<T> Index<Position> for Hex<T> {
+    type Output = T;
+
+    fn index(&self, p: Position) -> &Self::Output {
+        unsafe {
+            self.0
+                .get_unchecked(p.as_index())
+                .as_ref()
+                .unwrap_unchecked()
+        }
+    }
+}
+
+impl<T> IndexMut<Position> for Hex<T> {
+    fn index_mut(&mut self, p: Position) -> &mut Self::Output {
+        unsafe {
+            self.0
+                .get_unchecked_mut(p.as_index())
+                .as_mut()
+                .unwrap_unchecked()
+        }
     }
 }
 
@@ -134,10 +138,13 @@ impl<T> Hex<T> {
     /// |    G4    F5    E6
     /// |       G5    F6
     /// |          G6
-    pub const POSITIONS: [(usize, usize); 37] = [
-        A0, A1, A2, A3, B0, B1, B2, B3, B4, C0, C1, C2, C3, C4, C5, D0, D1, D2, D3, D4, D5, D6, E1,
-        E2, E3, E4, E5, E6, F2, F3, F4, F5, F6, G3, G4, G5, G6,
-    ];
+    pub const POSITIONS: [Position; 37] = {
+        use positions::*;
+        [
+            A0, A1, A2, A3, B0, B1, B2, B3, B4, C0, C1, C2, C3, C4, C5, D0, D1, D2, D3, D4, D5, D6,
+            E1, E2, E3, E4, E5, E6, F2, F3, F4, F5, F6, G3, G4, G5, G6,
+        ]
+    };
     const INDICES: [usize; 37] = indices(Self::POSITIONS);
     const POSITION_TO_INDEX: [[Option<usize>; 7]; 7] = position_to_index(Self::POSITIONS);
 
@@ -154,10 +161,13 @@ impl<T> Hex<T> {
     /// |    F6    D5    B4
     /// |       E6    C5
     /// |          D6
-    const POSITIONS_ROTATED_60: [(usize, usize); 37] = [
-        D0, C0, B0, A0, E1, D1, C1, B1, A1, F2, E2, D2, C2, B2, A2, G3, F3, E3, D3, C3, B3, A3, G4,
-        F4, E4, D4, C4, B4, G5, F5, E5, D5, C5, G6, F6, E6, D6,
-    ];
+    const POSITIONS_ROTATED_60: [Position; 37] = {
+        use positions::*;
+        [
+            D0, C0, B0, A0, E1, D1, C1, B1, A1, F2, E2, D2, C2, B2, A2, G3, F3, E3, D3, C3, B3, A3,
+            G4, F4, E4, D4, C4, B4, G5, F5, E5, D5, C5, G6, F6, E6, D6,
+        ]
+    };
     const INDICES_ROTATED_60: [usize; 37] = indices(Self::POSITIONS_ROTATED_60);
 
     pub fn from_fn<F>(mut f: F) -> Hex<T>
@@ -165,48 +175,52 @@ impl<T> Hex<T> {
         F: FnMut(usize, usize) -> T,
     {
         let mut hex = Hex(array::from_fn(|_| None));
-        for (i, (x, y)) in Self::INDICES.into_iter().zip(Self::POSITIONS) {
-            hex.0[i] = Some(f(x, y));
+        for p in Self::POSITIONS {
+            let (x, y) = p.as_xy();
+            unsafe {
+                *hex.0.get_unchecked_mut(p.as_index()) = Some(f(x, y));
+            }
         }
         hex
     }
 
+    pub fn try_map_by_ref<F, U, E>(&self, mut f: F) -> Result<Hex<U>, E>
+    where
+        F: FnMut(&T) -> Result<U, E>,
+    {
+        let mut hex = Hex(array::from_fn(|_| None));
+        for (t, p) in self.enumerate() {
+            unsafe {
+                *hex.0.get_unchecked_mut(p.as_index()) = Some(f(t)?);
+            }
+        }
+        Ok(hex)
+    }
+
     pub fn at(&self, x: usize, y: usize) -> Option<&T> {
         let i = Self::POSITION_TO_INDEX.get(y)?.get(x).copied()??;
-        let t = self
-            .0
-            .get(i)
-            .unwrap()
-            .as_ref()
-            .expect("hexagonal shape not maintained");
+        let t = unsafe { self.0.get_unchecked(i).as_ref().unwrap_unchecked() };
         Some(t)
     }
 
     pub fn at_mut(&mut self, x: usize, y: usize) -> Option<&mut T> {
         let i = Self::POSITION_TO_INDEX.get(y)?.get(x).copied()??;
-        let t = self
-            .0
-            .get_mut(i)
-            .unwrap()
-            .as_mut()
-            .expect("hexagonal shape not maintained");
+        let t = unsafe { self.0.get_unchecked_mut(i).as_mut().unwrap_unchecked() };
         Some(t)
     }
 
-    pub fn enumerate(&self) -> impl Iterator<Item = (usize, usize, &T)> + '_ {
+    pub fn enumerate(&self) -> impl Iterator<Item = (&T, Position)> + '_ {
         self.0
             .iter()
             .filter_map(|t| t.as_ref())
             .zip(Self::POSITIONS)
-            .map(|(t, (x, y))| (x, y, t))
     }
 
-    pub fn enumerate_mut(&mut self) -> impl Iterator<Item = (usize, usize, &mut T)> + '_ {
+    pub fn enumerate_mut(&mut self) -> impl Iterator<Item = (&mut T, Position)> + '_ {
         self.0
             .iter_mut()
             .filter_map(|t| t.as_mut())
             .zip(Self::POSITIONS)
-            .map(|(t, (x, y))| (x, y, t))
     }
 
     pub fn rotate_60_cw(&mut self) {
@@ -219,10 +233,25 @@ impl<T> Hex<T> {
         *self = rotated;
     }
 
+    pub fn flip_horizontally(&mut self) {
+        let mut flipped = Self(array::from_fn(|_| None));
+        for p in Self::POSITIONS {
+            let (x, y) = p.as_xy();
+            let i = p.as_index();
+            let j = y + 7 * x;
+            unsafe {
+                *flipped.0.get_unchecked_mut(i) = self.0.get_unchecked_mut(j).take();
+            }
+        }
+        *self = flipped;
+    }
+
     pub fn visualize<F>(&self, mut f: F) -> String
     where
         F: FnMut(&T) -> Cow<str>,
     {
+        use positions::*;
+
         // | -- -- -- A0 -- -- --
         // | -- -- B0 -- A1 -- --
         // | -- C0 -- B1 -- A2 --
@@ -236,104 +265,104 @@ impl<T> Hex<T> {
         // | -- G4 -- F5 -- E6 --
         // | -- -- G5 -- F6 -- --
         // | -- -- -- G6 -- -- --
-        const MAYBE_INDICES: [Option<usize>; 7 * 13] = [
+        const MAYBE_POSITIONS: [Option<Position>; 7 * 13] = [
             None,
             None,
             None,
-            Some(A0_INDEX),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(B0_INDEX),
-            None,
-            Some(A1_INDEX),
-            None,
-            None,
-            None,
-            Some(C0_INDEX),
-            None,
-            Some(B1_INDEX),
-            None,
-            Some(A2_INDEX),
-            None,
-            Some(D0_INDEX),
-            None,
-            Some(C1_INDEX),
-            None,
-            Some(B2_INDEX),
-            None,
-            Some(A3_INDEX),
-            None,
-            Some(D1_INDEX),
-            None,
-            Some(C2_INDEX),
-            None,
-            Some(B3_INDEX),
-            None,
-            Some(E1_INDEX),
-            None,
-            Some(D2_INDEX),
-            None,
-            Some(C3_INDEX),
-            None,
-            Some(B4_INDEX),
-            None,
-            Some(E2_INDEX),
-            None,
-            Some(D3_INDEX),
-            None,
-            Some(C4_INDEX),
-            None,
-            Some(F2_INDEX),
-            None,
-            Some(E3_INDEX),
-            None,
-            Some(D4_INDEX),
-            None,
-            Some(C5_INDEX),
-            None,
-            Some(F3_INDEX),
-            None,
-            Some(E4_INDEX),
-            None,
-            Some(D5_INDEX),
-            None,
-            Some(G3_INDEX),
-            None,
-            Some(F4_INDEX),
-            None,
-            Some(E5_INDEX),
-            None,
-            Some(D6_INDEX),
-            None,
-            Some(G4_INDEX),
-            None,
-            Some(F5_INDEX),
-            None,
-            Some(E6_INDEX),
-            None,
-            None,
-            None,
-            Some(G5_INDEX),
-            None,
-            Some(F6_INDEX),
+            Some(A0),
             None,
             None,
             None,
             None,
             None,
-            Some(G6_INDEX),
+            Some(B0),
+            None,
+            Some(A1),
+            None,
+            None,
+            None,
+            Some(C0),
+            None,
+            Some(B1),
+            None,
+            Some(A2),
+            None,
+            Some(D0),
+            None,
+            Some(C1),
+            None,
+            Some(B2),
+            None,
+            Some(A3),
+            None,
+            Some(D1),
+            None,
+            Some(C2),
+            None,
+            Some(B3),
+            None,
+            Some(E1),
+            None,
+            Some(D2),
+            None,
+            Some(C3),
+            None,
+            Some(B4),
+            None,
+            Some(E2),
+            None,
+            Some(D3),
+            None,
+            Some(C4),
+            None,
+            Some(F2),
+            None,
+            Some(E3),
+            None,
+            Some(D4),
+            None,
+            Some(C5),
+            None,
+            Some(F3),
+            None,
+            Some(E4),
+            None,
+            Some(D5),
+            None,
+            Some(G3),
+            None,
+            Some(F4),
+            None,
+            Some(E5),
+            None,
+            Some(D6),
+            None,
+            Some(G4),
+            None,
+            Some(F5),
+            None,
+            Some(E6),
+            None,
+            None,
+            None,
+            Some(G5),
+            None,
+            Some(F6),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(G6),
             None,
             None,
             None,
         ];
 
-        let cows = MAYBE_INDICES
+        let cows = MAYBE_POSITIONS
             .into_iter()
-            .map(|i| match i {
-                Some(i) => f(unsafe { self.0.get_unchecked(i).as_ref().unwrap_unchecked() }),
+            .map(|p| match p {
+                Some(p) => f(&self[p]),
                 None => "".into(),
             })
             .collect_vec();

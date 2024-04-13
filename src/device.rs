@@ -159,27 +159,26 @@ impl Device for ScrcpyDevice {
             .lumas
             .lock()
             .map_err(|err| anyhow!("failed to take the lock for lumas: {}", err))?;
-        let arrows = self
-            .luma_sample_positions
-            .enumerate()
-            .map(|(_, _, ps)| {
-                let luma = ps
-                    .iter()
-                    .map(|&(x, y)| lumas[x + self.screen_width * y] as f64)
-                    .sum::<f64>()
-                    / Self::SAMPLE_COUNT_PER_ARROW as f64;
-                let luma = luma.round() as u8;
-                LUMA_TO_ARROW.get(&luma).copied()
-            })
-            .collect::<Option<Vec<_>>>();
-        Ok(arrows.map(Board::from_arrows))
+        let arrows = self.luma_sample_positions.try_map_by_ref(|ps| {
+            let luma = ps
+                .iter()
+                .map(|&(x, y)| lumas[x + self.screen_width * y] as f64)
+                .sum::<f64>()
+                / Self::SAMPLE_COUNT_PER_ARROW as f64;
+            let luma = luma.round() as u8;
+            LUMA_TO_ARROW
+                .get(&luma)
+                .copied()
+                .ok_or_else(|| anyhow!("no arrows correspond to luma value {}", luma))
+        })?;
+        Ok(Some(Board::new(arrows)))
     }
 
-    fn tap_board(&mut self, taps: Hex<u8>) -> anyhow::Result<()> {
+    fn tap_board(&mut self, taps: Hex<usize>) -> anyhow::Result<()> {
         let taps = taps
             .enumerate()
             .zip(self.arrow_tap_positions.enumerate())
-            .flat_map(|((_, _, &n), (_, _, &(x, y)))| repeat((x, y)).take(n.into()));
+            .flat_map(|((&n, _), (&(x, y), _))| repeat((x, y)).take(n.into()));
         let taps = Self::serialize_taps(self.screen_width, self.screen_height, taps);
         self.control_stream.write_all(&taps).context("tap board")
     }
