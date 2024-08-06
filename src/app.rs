@@ -4,11 +4,11 @@ use std::{
 };
 
 use anyhow::{bail, Context};
-use itertools::Itertools;
 
 use crate::{expert::Board, hex::Hex};
 
 pub trait Device {
+    fn wait_duration() -> Duration;
     fn detect_board(&mut self) -> anyhow::Result<Option<Board>>;
     fn tap_board(&mut self, taps: Hex<usize>) -> anyhow::Result<()>;
     fn tap_claim_button(&mut self) -> anyhow::Result<()>;
@@ -142,8 +142,7 @@ where
             .context("player transition")?;
         match action {
             Action::Wait => {
-                // FIXME:
-                sleep(Duration::from_millis(1));
+                sleep(D::wait_duration());
             }
             Action::Solve(b) => {
                 device.tap_board(b.solve()).context("tap board")?;

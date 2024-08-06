@@ -144,6 +144,10 @@ impl Drop for ScrcpyDevice {
 }
 
 impl Device for ScrcpyDevice {
+    fn wait_duration() -> Duration {
+        Duration::from_millis(1)
+    }
+
     fn detect_board(&mut self) -> anyhow::Result<Option<Board>> {
         static LUMA_TO_ARROW: phf::Map<u8, Arrow> = phf_map! {
             39u8 => Arrow(0),
