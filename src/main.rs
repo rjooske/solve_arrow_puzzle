@@ -13,8 +13,8 @@ fn run(args: Args) -> anyhow::Result<()> {
         1440,
         3120,
         Vec2::new(721.0, 2750.0),
+        2,
         Transform::new(Vec2::new(721.5, 1178.5), Vec2::new(721.5, 2430.5)),
-        "scrcpy-server-v2.4",
         10001,
         10002,
     )

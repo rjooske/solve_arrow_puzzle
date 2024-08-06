@@ -1,8 +1,11 @@
 use std::{
+    env::temp_dir,
     fmt::Debug,
+    fs::{remove_file, write},
     io::{Read, Write},
     iter::{once, repeat},
     net::{SocketAddr, TcpListener, TcpStream},
+    path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread::{self},
@@ -123,8 +126,10 @@ pub struct ScrcpyDevice {
     screen_height: usize,
     claim_button_x: u32,
     claim_button_y: u32,
+    video_size_divider: usize,
     arrow_tap_positions: Hex<(u32, u32)>,
     luma_sample_positions: Hex<Vec<(usize, usize)>>,
+    scrcpy_server_temp_path: PathBuf,
     video_server: Child,
     control_server: Child,
     ffmpeg: Child,
@@ -134,6 +139,7 @@ pub struct ScrcpyDevice {
 
 impl Drop for ScrcpyDevice {
     fn drop(&mut self) {
+        let _ = remove_file(&self.scrcpy_server_temp_path);
         let _ = self.video_server.kill();
         let _ = self.video_server.wait();
         let _ = self.control_server.kill();
@@ -163,10 +169,11 @@ impl Device for ScrcpyDevice {
             .lumas
             .lock()
             .map_err(|err| anyhow!("failed to take the lock for lumas: {}", err))?;
+        let lumas_width = self.screen_width / self.video_size_divider;
         let arrows = self.luma_sample_positions.try_map_by_ref(|ps| {
             let luma = ps
                 .iter()
-                .map(|&(x, y)| lumas[x + self.screen_width * y] as f64)
+                .map(|&(x, y)| lumas[x + lumas_width * y] as f64)
                 .sum::<f64>()
                 / Self::SAMPLE_COUNT_PER_ARROW as f64;
             let luma = luma.round() as u8;
@@ -174,15 +181,15 @@ impl Device for ScrcpyDevice {
                 .get(&luma)
                 .copied()
                 .ok_or_else(|| anyhow!("no arrows correspond to luma value {}", luma))
-        })?;
-        Ok(Some(Board::new(arrows)))
+        });
+        Ok(arrows.ok().map(Board::new))
     }
 
     fn tap_board(&mut self, taps: Hex<usize>) -> anyhow::Result<()> {
         let taps = taps
             .enumerate()
             .zip(self.arrow_tap_positions.enumerate())
-            .flat_map(|((&n, _), (&(x, y), _))| repeat((x, y)).take(n.into()));
+            .flat_map(|((&n, _), (&(x, y), _))| repeat((x, y)).take(n));
         let taps = Self::serialize_taps(self.screen_width, self.screen_height, taps);
         self.control_stream.write_all(&taps).context("tap board")
     }
@@ -206,12 +213,29 @@ impl ScrcpyDevice {
         screen_width: usize,
         screen_height: usize,
         claim_button: Vec2,
+        video_size_divider: usize,
         transform: Transform,
-        scrcpy_server_path: &str,
         scrcpy_video_port: u16,
         scrcpy_control_port: u16,
     ) -> anyhow::Result<ScrcpyDevice> {
         use std::f64::consts::PI;
+
+        if screen_width % video_size_divider != 0 {
+            bail!(
+                "screen width {} cannot be divided by video size divider {}",
+                screen_width,
+                video_size_divider
+            );
+        }
+        if screen_height % video_size_divider != 0 {
+            bail!(
+                "screen height {} cannot be divided by video size divider {}",
+                screen_height,
+                video_size_divider
+            );
+        }
+        let video_width = screen_width / video_size_divider;
+        let video_height = screen_height / video_size_divider;
 
         let (claim_button_x, claim_button_y) = claim_button.round_as_u32();
         let arrow_tap_positions =
@@ -222,15 +246,25 @@ impl ScrcpyDevice {
             (0..Self::SAMPLE_COUNT_PER_ARROW)
                 .map(|i| {
                     let angle = 2.0 * PI * i as f64 / Self::SAMPLE_COUNT_PER_ARROW as f64;
-                    center.add(diff.rotate(angle)).round_as_usize()
+                    center
+                        .add(diff.rotate(angle))
+                        .scale(1.0 / video_size_divider as f64)
+                        .round_as_usize()
                 })
                 .collect_vec()
         });
 
+        let scrcpy_server_temp_path = temp_dir().join(random::<u64>().to_string());
+        write(
+            &scrcpy_server_temp_path,
+            include_bytes!("../scrcpy-server-v2.4"),
+        )
+        .context("write scrcpy server to temp file")?;
+
         let adb_push_status = Command::new("adb")
             .args([
                 "push",
-                scrcpy_server_path,
+                &scrcpy_server_temp_path.to_string_lossy(),
                 "/data/local/tmp/scrcpy-server-manual.jar",
             ])
             .stdin(Stdio::null())
@@ -301,7 +335,7 @@ impl ScrcpyDevice {
                 "audio=false",
                 "control=false",
                 "raw_stream=true",
-                "max_fps=60",
+                &format!("max_size={}", video_width.max(video_height)),
                 "video_bit_rate=67108864", // 64 * 1024 * 1024
             ])
             .stdin(Stdio::null())
@@ -375,12 +409,12 @@ impl ScrcpyDevice {
             }
         });
 
-        let lumas_len = screen_width * screen_height;
+        let lumas_len = video_width * video_height;
         let lumas = Arc::new(Mutex::new(vec![0u8; lumas_len]));
         {
             let lumas = lumas.clone();
             thread::spawn(move || {
-                let yuvs_len = 3 * screen_width * screen_height / 2;
+                let yuvs_len = 3 * video_width * video_height / 2;
                 let mut yuvs = vec![0u8; yuvs_len];
                 loop {
                     ffmpeg_stdout.read_exact(&mut yuvs).unwrap();
@@ -389,24 +423,21 @@ impl ScrcpyDevice {
             });
         }
 
-        let mut device = ScrcpyDevice {
+        Ok(ScrcpyDevice {
             screen_width,
             screen_height,
             claim_button_x,
             claim_button_y,
+            video_size_divider,
             arrow_tap_positions,
             luma_sample_positions,
+            scrcpy_server_temp_path,
             video_server,
             control_server,
             ffmpeg,
             control_stream,
             lumas,
-        };
-        while device.detect_board().is_err() {
-            thread::sleep(Duration::from_millis(100));
-        }
-
-        Ok(device)
+        })
     }
 
     fn serialize_taps<I>(screen_width: usize, screen_height: usize, taps: I) -> Vec<u8>
